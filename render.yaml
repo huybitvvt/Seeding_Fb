@@ -22,6 +22,12 @@ services:
         value: staff_users
       - key: SUPABASE_CHANNEL_TABLE
         value: managed_channels
+      - key: FLOW_SUPABASE_URL
+        sync: false
+      - key: FLOW_SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: FLOW_SUPABASE_SYNC_ENABLED
+        value: "true"
       - key: TIKTOK_PLAYWRIGHT_WORKER_URL
         sync: false
       - key: TIKTOK_PLAYWRIGHT_WORKER_KEY

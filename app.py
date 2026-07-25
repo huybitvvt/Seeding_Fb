@@ -135,6 +135,27 @@ SUPABASE_COMMENT_IMAGE_BUCKET = os.environ.get('SUPABASE_COMMENT_IMAGE_BUCKET', 
 SUPABASE_POST_MEDIA_BUCKET = os.environ.get('SUPABASE_POST_MEDIA_BUCKET', SUPABASE_COMMENT_IMAGE_BUCKET)
 APP_TIMEZONE = os.environ.get('APP_TIMEZONE', 'Asia/Ho_Chi_Minh')
 
+_SOURCE_SUPABASE_PROJECT_REF = urlsplit((SUPABASE_URL or '').rstrip('/')).netloc.split('.')[0]
+_SALE_FLOW_TARGET = (
+    'https://kkwiyaczifckvnnxcjko.supabase.co',
+    'sb_publishable_-xhiMVuiGjqeV5mrlBNXaQ_eBm-5HLH',
+)
+FLOW_SUPABASE_URL = _normalize_supabase_url(os.environ.get('FLOW_SUPABASE_URL') or '')
+FLOW_SUPABASE_KEY = (
+    os.environ.get('FLOW_SUPABASE_SERVICE_ROLE_KEY')
+    or os.environ.get('FLOW_SUPABASE_PUBLISHABLE_KEY')
+    or ''
+)
+if _SOURCE_SUPABASE_PROJECT_REF == 'rhqzdpymmunfknfqtcwm':
+    FLOW_SUPABASE_URL = FLOW_SUPABASE_URL or _SALE_FLOW_TARGET[0]
+    FLOW_SUPABASE_KEY = FLOW_SUPABASE_KEY or _SALE_FLOW_TARGET[1]
+FLOW_SUPABASE_LEAD_TABLE = os.environ.get('FLOW_SUPABASE_LEAD_TABLE', 'leads')
+FLOW_SUPABASE_STAFF_TABLE = os.environ.get('FLOW_SUPABASE_STAFF_TABLE', 'staff_users')
+FLOW_SUPABASE_USER_TABLE = os.environ.get('FLOW_SUPABASE_USER_TABLE', 'users')
+FLOW_SUPABASE_SYNC_ENABLED = os.environ.get('FLOW_SUPABASE_SYNC_ENABLED', 'true').lower() not in (
+    '0', 'false', 'no', 'off',
+)
+
 
 def _supabase_project_ref() -> str:
     host = urlsplit((SUPABASE_URL or '').rstrip('/')).netloc
@@ -1589,6 +1610,256 @@ def _lead_to_supabase_row(lead: dict) -> dict:
     }
 
 
+def _flow_lead_sync_enabled() -> bool:
+    if not FLOW_SUPABASE_SYNC_ENABLED or not FLOW_SUPABASE_URL or not FLOW_SUPABASE_KEY:
+        return False
+    source = (SUPABASE_URL or '').rstrip('/').lower()
+    target = FLOW_SUPABASE_URL.rstrip('/').lower()
+    return bool(source and target and source != target)
+
+
+def _flow_headers(prefer: str = '') -> dict:
+    headers = {
+        'apikey': FLOW_SUPABASE_KEY,
+        'Authorization': f'Bearer {FLOW_SUPABASE_KEY}',
+        'Content-Type': 'application/json',
+    }
+    if prefer:
+        headers['Prefer'] = prefer
+    return headers
+
+
+def _flow_error(resp) -> str:
+    try:
+        payload = resp.json()
+        return str(payload.get('message') or payload.get('error') or resp.text)[:300]
+    except Exception:
+        return str(resp.text or f'HTTP {resp.status_code}')[:300]
+
+
+def _flow_owner_map(rows: list[dict]) -> tuple[dict[str, dict], str]:
+    usernames = {
+        str(row.get('created_by_staff_username') or '').strip().lower()
+        for row in rows
+        if str(row.get('created_by_staff_username') or '').strip()
+    }
+    names = {
+        str(row.get('created_by_staff_name') or '').strip().lower()
+        for row in rows
+        if str(row.get('created_by_staff_name') or '').strip()
+    }
+    if not usernames and not names:
+        return {}, ''
+
+    try:
+        staff_resp = _req.get(
+            f"{FLOW_SUPABASE_URL.rstrip('/')}/rest/v1/{FLOW_SUPABASE_STAFF_TABLE}",
+            headers=_flow_headers(),
+            params={
+                'select': 'id,name,username,password,role,enabled',
+                'limit': '500',
+            },
+            timeout=20,
+        )
+        if staff_resp.status_code not in (200, 206):
+            return {}, f'Không đọc được nhân sự F-Solution: {_flow_error(staff_resp)}'
+        staff_rows = staff_resp.json() or []
+
+        users_resp = _req.get(
+            f"{FLOW_SUPABASE_URL.rstrip('/')}/rest/v1/{FLOW_SUPABASE_USER_TABLE}",
+            headers=_flow_headers(),
+            params={'select': 'user_id,username,full_name', 'limit': '500'},
+            timeout=20,
+        )
+        if users_resp.status_code not in (200, 206):
+            return {}, f'Không đọc được tài khoản F-Solution: {_flow_error(users_resp)}'
+        user_rows = users_resp.json() or []
+    except Exception as e:
+        return {}, str(e)[:300]
+
+    users_by_username = {
+        str(item.get('username') or '').strip().lower(): item
+        for item in user_rows
+        if str(item.get('username') or '').strip()
+    }
+    users_by_name = {
+        str(item.get('full_name') or '').strip().lower(): item
+        for item in user_rows
+        if str(item.get('full_name') or '').strip()
+    }
+    staff_by_username = {
+        str(item.get('username') or '').strip().lower(): item
+        for item in staff_rows
+        if str(item.get('username') or '').strip()
+    }
+    staff_by_name = {
+        str(item.get('name') or '').strip().lower(): item
+        for item in staff_rows
+        if str(item.get('name') or '').strip()
+    }
+
+    missing_users = []
+    for username in usernames:
+        if username in users_by_username:
+            continue
+        staff = staff_by_username.get(username)
+        if not staff:
+            continue
+        user_id = str(staff.get('id') or '').strip()
+        if not user_id:
+            continue
+        role = str(staff.get('role') or 'staff').strip()
+        new_user = {
+            'user_id': user_id,
+            'full_name': str(staff.get('name') or username).strip(),
+            'username': username,
+            'phone': username,
+            'password': str(staff.get('password') or '123456'),
+            'role': role,
+            'access_role': 'admin' if role.lower() == 'admin' else 'worker',
+            'enabled': bool(staff.get('enabled', True)),
+            'status': 'active' if bool(staff.get('enabled', True)) else 'inactive',
+            'updated_at': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+        }
+        missing_users.append(new_user)
+        users_by_username[username] = new_user
+        users_by_name[str(new_user['full_name']).lower()] = new_user
+
+    if missing_users:
+        try:
+            create_resp = _req.post(
+                f"{FLOW_SUPABASE_URL.rstrip('/')}/rest/v1/{FLOW_SUPABASE_USER_TABLE}?on_conflict=user_id",
+                headers=_flow_headers('resolution=merge-duplicates,return=minimal'),
+                json=missing_users,
+                timeout=20,
+            )
+            if create_resp.status_code not in (200, 201, 204):
+                return {}, f'Không đồng bộ được tài khoản F-Solution: {_flow_error(create_resp)}'
+        except Exception as e:
+            return {}, str(e)[:300]
+
+    owner_map: dict[str, dict] = {}
+    for username in usernames:
+        user = users_by_username.get(username)
+        staff = staff_by_username.get(username)
+        if user:
+            owner_map[f'username:{username}'] = {
+                'id': str(user.get('user_id') or ((staff or {}).get('id')) or ''),
+                'name': str(user.get('full_name') or (staff or {}).get('name') or ''),
+                'username': username,
+            }
+    for name in names:
+        user = users_by_name.get(name)
+        staff = staff_by_name.get(name)
+        if user:
+            owner_map[f'name:{name}'] = {
+                'id': str(user.get('user_id') or ((staff or {}).get('id')) or ''),
+                'name': str(user.get('full_name') or (staff or {}).get('name') or ''),
+                'username': str(user.get('username') or (staff or {}).get('username') or ''),
+            }
+    return owner_map, ''
+
+
+def _flow_lead_row(row: dict, owner_map: dict[str, dict]) -> dict:
+    target = dict(row)
+    target.pop('id', None)
+    username = str(row.get('created_by_staff_username') or '').strip().lower()
+    name = str(row.get('created_by_staff_name') or '').strip().lower()
+    owner = owner_map.get(f'username:{username}') or owner_map.get(f'name:{name}') or {}
+    owner_id = str(owner.get('id') or '').strip()
+    if owner_id:
+        target['created_by_staff_id'] = owner_id
+        target['created_by_staff_name'] = str(owner.get('name') or row.get('created_by_staff_name') or '')
+        target['created_by_staff_username'] = str(owner.get('username') or username)
+        target['phu_trach'] = owner_id
+        raw_lead = dict(target.get('raw_lead') or {})
+        raw_lead['created_by_staff_id'] = owner_id
+        raw_lead['processed_by_staff_id'] = owner_id
+        raw_lead['created_by_staff_name'] = target['created_by_staff_name']
+        raw_lead['processed_by'] = target['created_by_staff_name']
+        raw_lead['created_by_staff_username'] = target['created_by_staff_username']
+        raw_lead['processed_by_staff_username'] = target['created_by_staff_username']
+        target['raw_lead'] = raw_lead
+    else:
+        target['phu_trach'] = None
+
+    contact_status = str(target.get('contact_status') or '').strip().lower()
+    qualified = contact_status not in ('lost', 'rejected', 'invalid', 'unqualified')
+    target.update({
+        'ho_ten': target.get('customer_name') or 'Ẩn danh',
+        'so_dien_thoai': target.get('customer_phone') or '',
+        'nguon': target.get('lead_source') or target.get('platform') or 'seeding',
+        'anh_nhu_cau_url': target.get('comment_url') or target.get('post_url') or None,
+        'trang_thai': 'qualified' if qualified else 'unqualified',
+        'hop_le': qualified,
+        'thu_nhap': 0,
+        'la_trung': False,
+    })
+    return target
+
+
+def _sync_lead_rows_to_flow(rows: list[dict]) -> tuple[bool, str, int]:
+    if not rows or not _flow_lead_sync_enabled():
+        return True, '', 0
+    unique_rows = {
+        str(row.get('lead_key') or ''): row
+        for row in rows
+        if str(row.get('lead_key') or '').strip()
+    }
+    if not unique_rows:
+        return True, '', 0
+    owner_map, owner_warning = _flow_owner_map(list(unique_rows.values()))
+    if owner_warning:
+        return False, owner_warning, 0
+    payload = [_flow_lead_row(row, owner_map) for row in unique_rows.values()]
+    try:
+        for index in range(0, len(payload), 200):
+            resp = _req.post(
+                f"{FLOW_SUPABASE_URL.rstrip('/')}/rest/v1/{FLOW_SUPABASE_LEAD_TABLE}?on_conflict=lead_key",
+                headers=_flow_headers('resolution=merge-duplicates,return=minimal'),
+                json=payload[index:index + 200],
+                timeout=30,
+            )
+            if resp.status_code not in (200, 201, 204):
+                return False, _flow_error(resp), index
+        return True, '', len(payload)
+    except Exception as e:
+        return False, str(e)[:300], 0
+
+
+def _schedule_flow_lead_sync(rows: list[dict]) -> None:
+    if not rows or not _flow_lead_sync_enabled():
+        return
+
+    def _job():
+        ok, error, _ = _sync_lead_rows_to_flow(rows)
+        if not ok:
+            print(f'[flow-lead-sync] {error}')
+
+    threading.Thread(target=_job, daemon=True).start()
+
+
+def _load_all_supabase_lead_rows(limit: int = 5000) -> tuple[list[dict], str]:
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return [], 'Chưa cấu hình Supabase'
+    try:
+        resp = _req.get(
+            f"{SUPABASE_URL.rstrip('/')}/rest/v1/{SUPABASE_LEAD_TABLE}",
+            headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}'},
+            params={
+                'select': '*',
+                'order': 'created_at.desc',
+                'limit': str(max(1, min(int(limit or 5000), 5000))),
+            },
+            timeout=30,
+        )
+        if resp.status_code not in (200, 206):
+            return [], _flow_error(resp)
+        return list(resp.json() or []), ''
+    except Exception as e:
+        return [], str(e)[:300]
+
+
 def _save_leads_to_supabase(leads: list[dict]) -> tuple[bool, str]:
     if not leads:
         return True, ''
@@ -1623,6 +1894,7 @@ def _save_leads_to_supabase(leads: list[dict]) -> tuple[bool, str]:
                     except Exception:
                         pass
                 return False, resp.text[:300]
+        _schedule_flow_lead_sync(rows)
         return True, ''
     except Exception as e:
         return False, str(e)[:300]
@@ -6731,6 +7003,30 @@ def comment_leads_reconcile():
     if error:
         result['error'] = error
     return jsonify(result), (200 if result.get('ok') else 502)
+
+
+@app.route('/api/leads/sync-fsolution', methods=['POST'])
+def sync_leads_to_fsolution():
+    if not _is_admin():
+        return jsonify({'ok': False, 'error': 'Chỉ admin được đồng bộ Lead'}), 403
+    if not _flow_lead_sync_enabled():
+        return jsonify({
+            'ok': False,
+            'error': 'Chưa cấu hình database Lead của F-Solution',
+        }), 503
+    rows, source_error = _load_all_supabase_lead_rows()
+    if source_error:
+        return jsonify({'ok': False, 'error': f'Không đọc được Lead Sale: {source_error}'}), 502
+    ok, error, synced = _sync_lead_rows_to_flow(rows)
+    payload = {
+        'ok': ok,
+        'source_count': len(rows),
+        'synced_count': synced,
+        'target_project': urlsplit(FLOW_SUPABASE_URL).netloc.split('.')[0],
+    }
+    if error:
+        payload['error'] = error
+    return jsonify(payload), (200 if ok else 502)
 
 
 @app.route('/api/comment-stats/today', methods=['GET'])
