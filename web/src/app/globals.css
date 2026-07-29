@@ -400,6 +400,70 @@ button, input, select, textarea { font-family: inherit; }
   font-weight: 800;
   cursor: pointer;
 }
+.table-icon-button svg { display: block; margin: auto; }
+.history-head { align-items: flex-end; }
+.history-actions {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.history-date-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 145px;
+}
+.history-date-field span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.history-date-field input {
+  width: 100%;
+  height: 36px;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+  background: #fff;
+  color: #1f2937;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.history-date-field input:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+.history-clear-button { color: #64748b; }
+.history-export-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 126px;
+  height: 36px;
+  border: 1px solid #15803d;
+  border-radius: 10px;
+  background: #15803d;
+  color: #fff;
+  padding: 0 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.history-export-button:hover:not(:disabled) { background: #166534; border-color: #166534; }
+.history-export-button:disabled { cursor: not-allowed; opacity: .5; }
+.history-filter-meta {
+  margin: -4px 0 10px;
+  color: #64748b;
+  font-size: 12px;
+}
+.history-filter-meta.error,
+.history-export-error { color: #b91c1c; }
 .channel-form {
   display: grid;
   grid-template-columns: 1.1fr 1.4fr .8fr 1.3fr .9fr;
@@ -1800,6 +1864,10 @@ button, input, select, textarea { font-family: inherit; }
   .tiktok-meta-grid { grid-template-columns: 1fr; }
   .tiktok-stats-actions { align-items: flex-start; }
   .table-search { min-width: 100%; }
+  .history-head { align-items: stretch; flex-direction: column; }
+  .history-actions { display: grid; grid-template-columns: 1fr 1fr auto; justify-content: stretch; }
+  .history-date-field { min-width: 0; }
+  .history-export-button { grid-column: 1 / 3; width: 100%; }
 }
 
 .panel {
