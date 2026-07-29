@@ -65,6 +65,19 @@ class FacebookCookieStabilityTests(unittest.TestCase):
                 self.assertNotIn('staff-1', backend._staff_fb_display_names)
                 self.assertFalse(os.path.exists(token_file))
 
+    def test_startup_clear_removes_all_staff_tokens(self):
+        with tempfile.TemporaryDirectory() as token_dir:
+            for name in ('staff-1__primary.txt', 'staff-2__cookie.txt', 'ignore.json'):
+                with open(os.path.join(token_dir, name), 'w', encoding='utf-8') as handle:
+                    handle.write('cached')
+
+            with patch.object(backend, 'STAFF_TOKEN_DIR', token_dir):
+                backend._clear_all_staff_access_tokens()
+
+            self.assertFalse(os.path.exists(os.path.join(token_dir, 'staff-1__primary.txt')))
+            self.assertFalse(os.path.exists(os.path.join(token_dir, 'staff-2__cookie.txt')))
+            self.assertTrue(os.path.exists(os.path.join(token_dir, 'ignore.json')))
+
     def test_parallel_refresh_generates_one_replacement_for_a_stale_token(self):
         with tempfile.TemporaryDirectory() as token_dir:
             token_file = os.path.join(token_dir, 'token.txt')
