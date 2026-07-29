@@ -2828,7 +2828,7 @@ export function MonitorPage() {
         method: staffId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-        timeoutMs: 15000,
+        timeoutMs: 45000,
       });
       const d = await r.json().catch(() => ({
         ok: false,
@@ -2843,6 +2843,7 @@ export function MonitorPage() {
           null;
         if (savedStaff?.id && savedStaff.id === currentStaff?.id) {
           setCurrentStaff(savedStaff);
+          void loadFacebookCookieContext();
         }
         const storageText = d.storage === 'supabase' ? 'Supabase' : 'local';
         const staffCount = Array.isArray(d.staff) ? d.staff.length : 0;

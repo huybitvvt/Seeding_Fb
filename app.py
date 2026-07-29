@@ -2511,6 +2511,11 @@ def _primary_staff_cookie(row: dict) -> str:
         for item in cookies:
             if item.get('id') == active_id and item.get('cookie'):
                 return item['cookie']
+    persisted_cookie = str(row.get('cookie') or '').strip()
+    if persisted_cookie:
+        for item in cookies:
+            if item.get('cookie') == persisted_cookie:
+                return item['cookie']
     for item in cookies:
         if item.get('cookie'):
             return item['cookie']
@@ -2614,9 +2619,14 @@ def _staff_with_active_cookie(staff: dict) -> dict:
     merged = dict(staff)
     session_active_id = session.get('active_cookie_id') if has_request_context() else ''
     active_id = str(session_active_id or merged.get('active_cookie_id') or '').strip()
-    if active_id:
+    cookies = _normalize_staff_facebook_cookies(merged.get('facebook_cookies'), merged.get('cookie', ''))
+    if active_id and any(str(item.get('id') or '') == active_id for item in cookies):
         merged['active_cookie_id'] = active_id
-    return merged
+    else:
+        primary = _primary_staff_cookie(merged)
+        primary_item = next((item for item in cookies if item.get('cookie') == primary), None)
+        merged['active_cookie_id'] = str(primary_item.get('id') or '') if primary_item else ''
+    return _sync_staff_cookie_fields(merged)
 
 
 def _is_invalid_facebook_display_name(raw: str) -> bool:
@@ -2923,12 +2933,18 @@ def _prefetch_facebook_display_name(staff: dict) -> None:
     threading.Thread(target=_job, daemon=True).start()
 
 
-def _fetch_facebook_profile(cookie: str, *, allow_token: bool = True, fast: bool = False) -> dict:
+def _fetch_facebook_profile(
+    cookie: str,
+    *,
+    allow_token: bool = True,
+    fast: bool = False,
+    force_refresh: bool = False,
+) -> dict:
     user_id = _extract_cookie_user(cookie)
     if not user_id:
         return {'ok': False, 'name': '', 'id': '', 'error': 'Cookie thiếu c_user'}
     cached = _fb_profile_cache.get(user_id)
-    if cached and (time_module.time() - float(cached.get('ts') or 0)) < 3600:
+    if not force_refresh and cached and (time_module.time() - float(cached.get('ts') or 0)) < 3600:
         return {k: cached[k] for k in ('ok', 'name', 'id', 'error') if k in cached}
 
     try:
@@ -3090,9 +3106,19 @@ def _facebook_cookie_context_payload(staff: dict, *, resolve_name: bool = False,
         if should_resolve:
             cache_key = fb_id or cookie_id
             if cache_key not in profile_cache:
-                profile = _fetch_facebook_profile(cookie_val, allow_token=False, fast=not force_refresh)
+                profile = _fetch_facebook_profile(
+                    cookie_val,
+                    allow_token=False,
+                    fast=not force_refresh,
+                    force_refresh=force_refresh,
+                )
                 if not profile.get('ok'):
-                    profile = _fetch_facebook_profile(cookie_val, allow_token=True, fast=False)
+                    profile = _fetch_facebook_profile(
+                        cookie_val,
+                        allow_token=True,
+                        fast=False,
+                        force_refresh=force_refresh,
+                    )
                 profile_cache[cache_key] = profile
             profile = profile_cache[cache_key]
             if profile.get('ok') and profile.get('name'):
@@ -3132,10 +3158,16 @@ def _persist_active_cookie_choice(staff: dict, cookie_id: str, cookie: str) -> N
         return
     session['active_cookie_id'] = cookie_id
     now = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
+    normalized_cookies = _normalize_staff_facebook_cookies(
+        staff.get('facebook_cookies'),
+        staff.get('cookie', ''),
+    )
+    normalized_cookies.sort(key=lambda item: 0 if str(item.get('id') or '') == cookie_id else 1)
     remote_row = {
         'active_cookie_id': cookie_id,
         'cookie': cookie,
         'facebook_user_id': _extract_cookie_user(cookie),
+        'facebook_cookies': normalized_cookies,
         'updated_at': now,
     }
     if USE_SUPABASE:
@@ -3149,20 +3181,14 @@ def _persist_active_cookie_choice(staff: dict, cookie_id: str, cookie: str) -> N
         local_target['cookie'] = cookie
         local_target['facebook_user_id'] = _extract_cookie_user(cookie)
         local_target['updated_at'] = now
-        local_target['facebook_cookies'] = _normalize_staff_facebook_cookies(
-            local_target.get('facebook_cookies'),
-            cookie,
-        )
+        local_target['facebook_cookies'] = normalized_cookies
         _save_staff_cookies()
     token = session.get('staff_cache_token', '')
     if token and token in _session_staff_cache:
         cached = dict(_session_staff_cache[token])
         cached.update(remote_row)
         cached['active_cookie_id'] = cookie_id
-        cached['facebook_cookies'] = _normalize_staff_facebook_cookies(
-            cached.get('facebook_cookies'),
-            cookie,
-        )
+        cached['facebook_cookies'] = normalized_cookies
         _session_staff_cache[token] = cached
     _invalidate_facebook_cache(staff_id)
 
@@ -3610,9 +3636,14 @@ def _clear_staff_access_token(staff_id: str = '', cookie_id: str = '', cookie: s
 
 
 def _invalidate_facebook_cache(staff_id: str = '') -> None:
+    global _api_cache, _pages_cache, _fb_profile_cache, _staff_fb_display_names
     _api_cache.clear()
     _pages_cache.clear()
     if staff_id:
+        _fb_profile_cache.clear()
+        _staff_fb_display_names.pop(staff_id, None)
+        if has_request_context() and staff_id == _current_staff_id():
+            session.pop('facebook_display_name', None)
         _clear_staff_access_token(staff_id)
 
 
@@ -8873,6 +8904,7 @@ def staff_cookies_save():
         facebook_cookies, cookie_warning = _sanitize_staff_cookie_rows(facebook_cookies)
         facebook_cookies = _prepare_staff_facebook_cookies_for_save(facebook_cookies, fetch_names=False)
         cookie = _primary_staff_cookie({'facebook_cookies': facebook_cookies, 'cookie': ''})
+        active_cookie_id = str(facebook_cookies[0].get('id') or '') if facebook_cookies else ''
         if not name:
             return jsonify({'ok': False, 'error': 'Thiếu tên nhân sự'}), 400
         if not username:
@@ -8906,6 +8938,7 @@ def staff_cookies_save():
             'facebook_user_id': _extract_cookie_user(cookie),
             'managed_groups': managed_groups,
             'facebook_cookies': facebook_cookies,
+            'active_cookie_id': active_cookie_id,
             'enabled': True,
         }
         write_warning = ''
@@ -8953,6 +8986,7 @@ def staff_cookies_save():
             'role': 'staff',
             'managed_groups': managed_groups,
             'facebook_cookies': facebook_cookies,
+            'active_cookie_id': active_cookie_id,
             'enabled': True,
             'created_at': now,
             'updated_at': now,
@@ -8961,7 +8995,7 @@ def staff_cookies_save():
         if not _staff_cookies.get('active_staff_id'):
             _staff_cookies['active_staff_id'] = saved_id
         _save_staff_cookies()
-        _invalidate_facebook_cache()
+        _invalidate_facebook_cache(saved_id)
         _schedule_staff_cookie_name_refresh(saved_id, facebook_cookies)
         staff_rows, warning = _staff_list_after_change()
         warnings = [part for part in [warning, write_warning, cookie_warning] if part]
@@ -9015,8 +9049,27 @@ def staff_cookies_update(staff_id):
         incoming_cookies = [{'id': 'primary', 'label': 'Cookie chính', 'cookie': body.get('cookie', '')}]
     facebook_cookies = _merge_staff_facebook_cookies(incoming_cookies, target)
     facebook_cookies, cookie_warning = _sanitize_staff_cookie_rows(facebook_cookies)
-    facebook_cookies = _prepare_staff_facebook_cookies_for_save(facebook_cookies, fetch_names=True)
-    cookie = _primary_staff_cookie({'facebook_cookies': facebook_cookies, 'cookie': target.get('cookie', '')})
+    # Save the cookie immediately. Facebook name lookup runs in the background
+    # below; blocking this request makes the UI look like the update failed.
+    facebook_cookies = _prepare_staff_facebook_cookies_for_save(facebook_cookies, fetch_names=False)
+    active_cookie_id = str(target.get('active_cookie_id') or '').strip()
+    if not any(str(item.get('id') or '') == active_cookie_id for item in facebook_cookies):
+        active_cookie_id = str(
+            next(
+                (
+                    item.get('id')
+                    for item in facebook_cookies
+                    if item.get('cookie') == str(target.get('cookie') or '').strip()
+                ),
+                facebook_cookies[0].get('id') if facebook_cookies else '',
+            )
+            or ''
+        )
+    cookie = _primary_staff_cookie({
+        'facebook_cookies': facebook_cookies,
+        'active_cookie_id': active_cookie_id,
+        'cookie': target.get('cookie', ''),
+    })
 
     if not self_service:
         if not name:
@@ -9044,6 +9097,7 @@ def staff_cookies_update(staff_id):
         'role': target.get('role') or 'staff',
         'managed_groups': managed_groups,
         'facebook_cookies': facebook_cookies,
+        'active_cookie_id': active_cookie_id,
         'cookie': cookie,
         'facebook_user_id': _extract_cookie_user(cookie),
         'enabled': True,
@@ -9079,6 +9133,7 @@ def staff_cookies_update(staff_id):
         local_target['role'] = target.get('role') or local_target.get('role') or 'staff'
         local_target['managed_groups'] = managed_groups
         local_target['facebook_cookies'] = facebook_cookies
+        local_target['active_cookie_id'] = active_cookie_id
         local_target['cookie'] = cookie
         local_target['facebook_user_id'] = _extract_cookie_user(cookie)
         local_target['updated_at'] = now
@@ -9094,6 +9149,7 @@ def staff_cookies_update(staff_id):
             'role': target.get('role') or 'staff',
             'managed_groups': managed_groups,
             'facebook_cookies': facebook_cookies,
+            'active_cookie_id': active_cookie_id,
             'cookie': cookie,
             'facebook_user_id': _extract_cookie_user(cookie),
             'enabled': True,
@@ -9107,7 +9163,7 @@ def staff_cookies_update(staff_id):
         staff.append(local_row)
 
     _save_staff_cookies()
-    _invalidate_facebook_cache()
+    _invalidate_facebook_cache(staff_id)
     _schedule_staff_cookie_name_refresh(staff_id, facebook_cookies)
 
     if staff_id == _current_staff_id():
@@ -9120,6 +9176,7 @@ def staff_cookies_update(staff_id):
         }
         refreshed_staff['cookie'] = cookie
         refreshed_staff['facebook_cookies'] = facebook_cookies
+        refreshed_staff['active_cookie_id'] = active_cookie_id
         refreshed_staff['facebook_user_id'] = _extract_cookie_user(cookie)
         _set_logged_in_staff(refreshed_staff)
 
