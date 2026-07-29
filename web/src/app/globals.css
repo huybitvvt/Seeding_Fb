@@ -464,6 +464,27 @@ button, input, select, textarea { font-family: inherit; }
 }
 .history-filter-meta.error,
 .history-export-error { color: #b91c1c; }
+.history-success-summary {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 10px;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  background: #f0fdf4;
+  color: #166534;
+  padding: 10px 12px;
+}
+.history-success-summary-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 800;
+}
+.history-success-summary strong { min-width: 32px; font-size: 20px; line-height: 1; text-align: center; }
+.history-success-summary small { color: #4b7359; font-size: 12px; }
 .channel-form {
   display: grid;
   grid-template-columns: 1.1fr 1.4fr .8fr 1.3fr .9fr;
@@ -1868,6 +1889,8 @@ button, input, select, textarea { font-family: inherit; }
   .history-actions { display: grid; grid-template-columns: 1fr 1fr auto; justify-content: stretch; }
   .history-date-field { min-width: 0; }
   .history-export-button { grid-column: 1 / 3; width: 100%; }
+  .history-success-summary { justify-content: flex-start; flex-wrap: wrap; }
+  .history-success-summary small { flex-basis: 100%; padding-left: 25px; }
 }
 
 .panel {

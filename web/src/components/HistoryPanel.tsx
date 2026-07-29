@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Download, RefreshCw, X } from 'lucide-react';
+import { CircleCheckBig, Download, RefreshCw, X } from 'lucide-react';
 import type { CommentLog } from '@/lib/types';
 
 const VIETNAM_TIME_ZONE = 'Asia/Ho_Chi_Minh';
@@ -64,6 +64,10 @@ export function HistoryPanel({ rows, status, onReload }: { rows: CommentLog[]; s
       return true;
     });
   }, [fromDate, invalidRange, rows, toDate]);
+  const successfulCount = useMemo(
+    () => filteredRows.filter((item) => item.status === 'success').length,
+    [filteredRows],
+  );
 
   async function exportExcel() {
     if (invalidRange || !filteredRows.length || exporting) return;
@@ -126,6 +130,40 @@ export function HistoryPanel({ rows, status, onReload }: { rows: CommentLog[]; s
           },
           textCell(item.error_message || '', true),
         ]),
+        [null, null, null, null, null, null, null, null, null],
+        [
+          {
+            value: 'TỔNG COMMENT THÀNH CÔNG',
+            type: String,
+            columnSpan: 7,
+            fontWeight: 'bold' as const,
+            textColor: '#166534',
+            backgroundColor: '#DCFCE7',
+            align: 'right' as const,
+            alignVertical: 'center' as const,
+            borderColor: '#86EFAC',
+            borderStyle: 'thin' as const,
+          },
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          {
+            value: successfulCount,
+            type: Number,
+            columnSpan: 2,
+            fontWeight: 'bold' as const,
+            textColor: '#166534',
+            backgroundColor: '#DCFCE7',
+            align: 'center' as const,
+            alignVertical: 'center' as const,
+            borderColor: '#86EFAC',
+            borderStyle: 'thin' as const,
+          },
+          null,
+        ],
       ];
       const rangeName = `${fromDate || 'tat-ca'}_${toDate || 'tat-ca'}`;
       await writeXlsxFile(sheetData, {
@@ -248,6 +286,14 @@ export function HistoryPanel({ rows, status, onReload }: { rows: CommentLog[]; s
             )}
           </tbody>
         </table>
+      </div>
+      <div className="history-success-summary">
+        <div className="history-success-summary-label">
+          <CircleCheckBig size={18} aria-hidden="true" />
+          <span>Tổng comment thành công</span>
+        </div>
+        <strong>{successfulCount}</strong>
+        <small>trên {filteredRows.length} bản ghi đang hiển thị</small>
       </div>
       {status ? <div className="module-status">{status}</div> : null}
       {exportError ? <div className="module-status history-export-error">{exportError}</div> : null}
