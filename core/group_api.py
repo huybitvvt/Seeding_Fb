@@ -124,6 +124,11 @@ class FacebookGroupAPI:
     def _is_expired(self, data: dict) -> bool:
         return data.get('error', {}).get('code') == 190
 
+    def _should_refresh_access_token(self, data: dict) -> bool:
+        # Facebook sometimes returns #368 for a token generated from an older
+        # cookie instead of the usual #190 expired-token response.
+        return (data.get('error') or {}).get('code') in (190, 368)
+
     def _remember_graph_error(self, data: dict) -> None:
         error = data.get('error') or {}
         message = str(error.get('message') or '').strip()
@@ -154,11 +159,14 @@ class FacebookGroupAPI:
                     time.sleep(0.4)
                     continue
                 return None
-            if self._is_expired(data):
+            if self._should_refresh_access_token(data):
                 if attempt == 0 and self._refresh_access_token():
                     continue
-                print('Khong the refresh token - kiem tra lai cookie')
-                self.last_graph_error = 'Cookie/token Facebook hết hạn hoặc không hợp lệ.'
+                if self._is_expired(data):
+                    print('Khong the refresh token - kiem tra lai cookie')
+                    self.last_graph_error = 'Cookie/token Facebook hết hạn hoặc không hợp lệ.'
+                else:
+                    self._remember_graph_error(data)
                 return None
             if data.get('error'):
                 self._remember_graph_error(data)

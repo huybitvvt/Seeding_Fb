@@ -140,6 +140,26 @@ class FacebookCookieStabilityTests(unittest.TestCase):
         self.assertIn('Permissions error', api.last_graph_error)
         self.assertIn('#200', api.last_graph_error)
 
+    def test_graph_368_refreshes_token_once_before_failing(self):
+        api = group_api.FacebookGroupAPI.__new__(group_api.FacebookGroupAPI)
+        api.access_token = 'old-token'
+        api.last_graph_error = ''
+
+        with patch.object(api, '_refresh_access_token', return_value=True) as refresh_mock:
+            with patch.object(
+                group_api.requests,
+                'get',
+                side_effect=[
+                    FakeResponse({'error': {'code': 368, 'message': 'Token blocked'}}),
+                    FakeResponse({'data': [{'id': 'post-1'}]}),
+                ],
+            ) as get_mock:
+                payload = api._call('get', 'https://graph.facebook.com/test')
+
+        self.assertEqual(payload['data'][0]['id'], 'post-1')
+        self.assertEqual(get_mock.call_count, 2)
+        refresh_mock.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main()
