@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { CircleCheckBig, Download, RefreshCw, X } from 'lucide-react';
 import type { CommentLog } from '@/lib/types';
+import type { SheetData } from 'write-excel-file/browser';
 
 const VIETNAM_TIME_ZONE = 'Asia/Ho_Chi_Minh';
 const dateKeyFormatter = new Intl.DateTimeFormat('en-CA', {
@@ -47,7 +48,34 @@ function statusLabel(status?: string) {
   return status || '—';
 }
 
-export function HistoryPanel({ rows, status, onReload }: { rows: CommentLog[]; status: string; onReload: () => Promise<void> }) {
+function uniqueSheetName(value: string, usedNames: Set<string>, fallback: string) {
+  const normalized = value
+    .trim()
+    .replace(/[\\/*?:[\]]+/g, '-')
+    .replace(/\s+/g, ' ')
+    .slice(0, 31) || fallback;
+  let name = normalized;
+  let suffix = 2;
+  while (usedNames.has(name.toLocaleLowerCase('vi'))) {
+    const suffixText = ` (${suffix})`;
+    name = `${normalized.slice(0, 31 - suffixText.length)}${suffixText}`;
+    suffix += 1;
+  }
+  usedNames.add(name.toLocaleLowerCase('vi'));
+  return name;
+}
+
+export function HistoryPanel({
+  rows,
+  status,
+  onReload,
+  isAdmin = false,
+}: {
+  rows: CommentLog[];
+  status: string;
+  onReload: () => Promise<void>;
+  isAdmin?: boolean;
+}) {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [exporting, setExporting] = useState(false);
@@ -96,19 +124,38 @@ export function HistoryPanel({ rows, status, onReload }: { rows: CommentLog[]; s
         borderColor: '#D9E1EC',
         borderStyle: 'thin' as const,
       });
-      const sheetData = [
-        [
-          header('STT'),
-          header('Thời gian'),
-          header('Nhân sự'),
-          header('Tài khoản'),
-          header('Bài viết'),
-          header('Link bài viết'),
-          header('Nội dung'),
-          header('Trạng thái'),
-          header('Chi tiết lỗi'),
-        ],
-        ...filteredRows.map((item, index) => [
+      const numberCell = (value: number, backgroundColor = '') => ({
+        value,
+        type: Number,
+        align: 'center' as const,
+        alignVertical: 'center' as const,
+        backgroundColor: backgroundColor || undefined,
+        borderColor: '#D9E1EC',
+        borderStyle: 'thin' as const,
+      });
+      const percentageCell = (value: number) => ({
+        value,
+        type: Number,
+        format: '0.0%',
+        align: 'center' as const,
+        alignVertical: 'center' as const,
+        borderColor: '#D9E1EC',
+        borderStyle: 'thin' as const,
+      });
+      const headerRow = () => [
+        header('STT'),
+        header('Thời gian'),
+        header('Nhân sự'),
+        header('Tài khoản'),
+        header('Bài viết'),
+        header('Link bài viết'),
+        header('Nội dung'),
+        header('Trạng thái'),
+        header('Chi tiết lỗi'),
+      ];
+      const commentRows = (items: CommentLog[]): SheetData => [
+        headerRow(),
+        ...items.map((item, index) => [
           {
             value: index + 1,
             type: Number,
@@ -151,7 +198,7 @@ export function HistoryPanel({ rows, status, onReload }: { rows: CommentLog[]; s
           null,
           null,
           {
-            value: successfulCount,
+            value: items.filter((item) => item.status === 'success').length,
             type: Number,
             columnSpan: 2,
             fontWeight: 'bold' as const,
@@ -165,24 +212,97 @@ export function HistoryPanel({ rows, status, onReload }: { rows: CommentLog[]; s
           null,
         ],
       ];
-      const rangeName = `${fromDate || 'tat-ca'}_${toDate || 'tat-ca'}`;
-      await writeXlsxFile(sheetData, {
-        sheet: 'Lich su comment',
-        columns: [
-          { width: 7 },
-          { width: 21 },
-          { width: 24 },
-          { width: 20 },
-          { width: 38 },
-          { width: 42 },
-          { width: 55 },
-          { width: 16 },
-          { width: 36 },
-        ],
+      const sheetColumns = [
+        { width: 7 },
+        { width: 21 },
+        { width: 24 },
+        { width: 20 },
+        { width: 38 },
+        { width: 42 },
+        { width: 55 },
+        { width: 16 },
+        { width: 36 },
+      ];
+      const makeCommentSheet = (sheet: string, items: CommentLog[]) => ({
+        sheet,
+        data: commentRows(items),
+        columns: sheetColumns,
         stickyRowsCount: 1,
-        orientation: 'landscape',
+        orientation: 'landscape' as const,
         showGridLines: false,
-      }, {
+      });
+      const staffGroups = new Map<string, CommentLog[]>();
+      filteredRows.forEach((item) => {
+        const key = item.staff_id || item.staff_username || item.staff_name || 'unknown';
+        const group = staffGroups.get(key) || [];
+        group.push(item);
+        staffGroups.set(key, group);
+      });
+      const staffGroupList = [...staffGroups.values()].sort((left, right) => {
+        const leftLabel = left[0]?.staff_name || left[0]?.staff_username || left[0]?.staff_id || '';
+        const rightLabel = right[0]?.staff_name || right[0]?.staff_username || right[0]?.staff_id || '';
+        return leftLabel.localeCompare(rightLabel, 'vi');
+      });
+      const summaryRows: SheetData = [
+        [
+          header('Nhân sự'),
+          header('Tài khoản'),
+          header('Tổng comment'),
+          header('Thành công'),
+          header('Lỗi'),
+          header('Tỷ lệ thành công'),
+        ],
+        ...staffGroupList.map((items) => {
+          const first = items[0];
+          const successCount = items.filter((item) => item.status === 'success').length;
+          const failedCount = items.filter((item) => item.status === 'failed').length;
+          return [
+            textCell(first?.staff_name || first?.staff_username || first?.staff_id || 'Ẩn danh'),
+            textCell(first?.staff_username ? `@${first.staff_username}` : first?.staff_id || ''),
+            numberCell(items.length),
+            numberCell(successCount),
+            numberCell(failedCount),
+            percentageCell(items.length ? successCount / items.length : 0),
+          ];
+        }),
+        [null, null, null, null, null, null],
+        [
+          {
+            value: 'TỔNG',
+            type: String,
+            fontWeight: 'bold' as const,
+            backgroundColor: '#DBEAFE',
+            borderColor: '#93C5FD',
+            borderStyle: 'thin' as const,
+          },
+          textCell(''),
+          numberCell(filteredRows.length, '#DBEAFE'),
+          numberCell(successfulCount, '#DCFCE7'),
+          numberCell(filteredRows.filter((item) => item.status === 'failed').length, '#FEE2E2'),
+          percentageCell(filteredRows.length ? successfulCount / filteredRows.length : 0),
+        ],
+      ];
+      const rangeName = `${fromDate || 'tat-ca'}_${toDate || 'tat-ca'}`;
+      const usedSheetNames = new Set(['tổng quan', 'tất cả comment']);
+      const sheets = isAdmin
+        ? [
+            {
+              sheet: 'Tổng quan',
+              data: summaryRows,
+              columns: [{ width: 28 }, { width: 20 }, { width: 16 }, { width: 16 }, { width: 12 }, { width: 20 }],
+              stickyRowsCount: 1,
+              orientation: 'landscape' as const,
+              showGridLines: false,
+            },
+            makeCommentSheet('Tất cả comment', filteredRows),
+            ...staffGroupList.map((items, index) => {
+              const first = items[0];
+              const label = first?.staff_name || first?.staff_username || first?.staff_id || `Nhân sự ${index + 1}`;
+              return makeCommentSheet(uniqueSheetName(label, usedSheetNames, `Nhân sự ${index + 1}`), items);
+            }),
+          ]
+        : [makeCommentSheet('Lich su comment', filteredRows)];
+      await writeXlsxFile(sheets, {
         fontFamily: 'Arial',
         fontSize: 11,
       }).toFile(`lich-su-comment-sale_${rangeName}.xlsx`);

@@ -3018,7 +3018,14 @@ export function MonitorPage() {
               />
             </section>
           ) : null}
-          {activeView === 'history' ? <HistoryPanel rows={commentLogs} status={historyStatus} onReload={loadCommentLogs} /> : null}
+          {activeView === 'history' ? (
+            <HistoryPanel
+              rows={commentLogs}
+              status={historyStatus}
+              onReload={loadCommentLogs}
+              isAdmin={adminStaff}
+            />
+          ) : null}
           {activeView === 'leads' ? (
             <LeadManagerPanel
               leads={leads}
