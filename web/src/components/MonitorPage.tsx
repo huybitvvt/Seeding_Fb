@@ -15,7 +15,7 @@ import { MarketingPipelinePanel } from '@/components/MarketingPipelinePanel';
 import { ScriptWriterPanel } from '@/components/ScriptWriterPanel';
 import '@/components/standard-post-panel.css';
 import { StaffCookiePanel, type StaffPayload } from '@/components/StaffCookiePanel';
-import { api, AUTH_TIMEOUT_MS, formatFetchError, PUBLISH_TIMEOUT_MS } from '@/lib/api';
+import { api, AUTH_EXPIRED_EVENT, AUTH_TIMEOUT_MS, formatFetchError, PUBLISH_TIMEOUT_MS } from '@/lib/api';
 import { APP_BRAND } from '@/lib/app-brand';
 import { LEGACY_PATH_REDIRECTS, pathToView, viewToPath, type ViewKey } from '@/lib/app-routes';
 import { CONSOLE_NAV_ITEMS } from '@/lib/console-nav';
@@ -99,7 +99,7 @@ type PostFetchReport = {
 };
 
 const SCAN_SELECTED_STORAGE_KEY = 'scanSelectedGroups';
-const AUTH_STAFF_STORAGE_KEY = 'seeding.auth.staff.v1';
+const LEGACY_AUTH_STAFF_STORAGE_KEY = 'seeding.auth.staff.v1';
 const DEFAULT_GEMINI_PRO_MODEL = 'gemini-3.1-pro-preview';
 const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
 const DEFAULT_GROQ_MODEL = 'llama-3.3-70b-versatile';
@@ -228,45 +228,6 @@ function readStoredScanSelectedGroups(): Record<string, boolean> {
     return raw ? JSON.parse(raw) as Record<string, boolean> : {};
   } catch {
     return {};
-  }
-}
-
-function readCachedAuthStaff(): StaffAccount | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = window.localStorage.getItem(AUTH_STAFF_STORAGE_KEY);
-    if (!raw) return null;
-    const staff = JSON.parse(raw) as StaffAccount;
-    if (!staff?.id || (!staff.name && !staff.username) || staff.enabled === false) {
-      window.localStorage.removeItem(AUTH_STAFF_STORAGE_KEY);
-      return null;
-    }
-    return staff;
-  } catch {
-    window.localStorage.removeItem(AUTH_STAFF_STORAGE_KEY);
-    return null;
-  }
-}
-
-function writeCachedAuthStaff(staff: StaffAccount | null) {
-  if (typeof window === 'undefined') return;
-  try {
-    if (!staff?.id || staff.enabled === false) {
-      window.localStorage.removeItem(AUTH_STAFF_STORAGE_KEY);
-      return;
-    }
-    const cached: StaffAccount = {
-      id: staff.id,
-      name: staff.name,
-      username: staff.username,
-      role: staff.role,
-      enabled: staff.enabled,
-      facebook_user_id: staff.facebook_user_id,
-      active_facebook_name: staff.active_facebook_name,
-    };
-    window.localStorage.setItem(AUTH_STAFF_STORAGE_KEY, JSON.stringify(cached));
-  } catch {
-    /* localStorage can be unavailable in private browsing */
   }
 }
 
@@ -554,21 +515,18 @@ export function MonitorPage() {
   }, []);
 
   const checkAuth = useCallback(async () => {
+    setAuthChecked(false);
     try {
       const r = await api('/api/auth/status', { timeoutMs: AUTH_TIMEOUT_MS });
       if (!r.ok) {
-        const canKeepCachedSession = r.status >= 500 && Boolean(currentStaffRef.current?.id);
         setSetupRequired(false);
-        if (!canKeepCachedSession) {
-          setAuthenticated(false);
-          setCurrentStaff(null);
-          writeCachedAuthStaff(null);
-        }
+        setAuthenticated(false);
+        setCurrentStaff(null);
+        setCanManageStaff(false);
+        heavyBootstrapDoneRef.current = false;
         setAuthStatus(
           r.status >= 500
-            ? canKeepCachedSession
-              ? 'Máy chủ đang khởi động, dữ liệu sẽ tự tải khi kết nối xong.'
-              : 'Backend chưa chạy (port 5000). Chạy npm run dev:backend hoặc npm run dev.'
+            ? 'Máy chủ chưa sẵn sàng. Vui lòng đợi một lát rồi đăng nhập lại.'
             : `Không kiểm tra được đăng nhập (${r.status})`,
         );
         return;
@@ -577,23 +535,19 @@ export function MonitorPage() {
       setSetupRequired(!!d.setup_required && !d.simple_login);
       setAuthenticated(!!d.authenticated);
       setCurrentStaff(d.staff || null);
-      writeCachedAuthStaff(d.authenticated ? d.staff || null : null);
-      if (isStaffAdmin(d.staff)) setCanManageStaff(true);
+      setCanManageStaff(isStaffAdmin(d.staff));
+      if (!d.authenticated) heavyBootstrapDoneRef.current = false;
       setAuthStatus('');
     } catch (err: unknown) {
-      const canKeepCachedSession = Boolean(currentStaffRef.current?.id);
       setSetupRequired(false);
-      if (!canKeepCachedSession) {
-        setAuthenticated(false);
-        setCurrentStaff(null);
-        writeCachedAuthStaff(null);
-      }
+      setAuthenticated(false);
+      setCurrentStaff(null);
+      setCanManageStaff(false);
+      heavyBootstrapDoneRef.current = false;
       const aborted = err instanceof DOMException && err.name === 'AbortError';
       setAuthStatus(
         aborted
-          ? canKeepCachedSession
-            ? 'Máy chủ đang khởi động, dữ liệu sẽ tự tải khi kết nối xong.'
-            : 'Backend không phản hồi. Hãy chạy Flask (port 5000) rồi tải lại trang.'
+          ? 'Máy chủ đang khởi động hoặc chưa phản hồi. Vui lòng đợi một lát rồi đăng nhập lại.'
           : 'Không kết nối được server',
       );
     } finally {
@@ -1109,16 +1063,30 @@ export function MonitorPage() {
   }, []);
 
   useEffect(() => {
-    const cachedStaff = readCachedAuthStaff();
-    if (cachedStaff) {
-      currentStaffRef.current = cachedStaff;
-      setCurrentStaff(cachedStaff);
-      setAuthenticated(true);
-      setAuthChecked(true);
-      if (isStaffAdmin(cachedStaff)) setCanManageStaff(true);
+    try {
+      window.localStorage.removeItem(LEGACY_AUTH_STAFF_STORAGE_KEY);
+    } catch {
+      /* localStorage can be unavailable in private browsing */
     }
     void checkAuth();
   }, [checkAuth]);
+
+  useEffect(() => {
+    const handleExpiredSession = () => {
+      currentStaffRef.current = null;
+      heavyBootstrapDoneRef.current = false;
+      setAuthenticated(false);
+      setAuthChecked(true);
+      setCurrentStaff(null);
+      setCanManageStaff(false);
+      setStaffRows([]);
+      setAllPosts([]);
+      setFacebookCookieContext(null);
+      setAuthStatus('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
+    };
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleExpiredSession);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleExpiredSession);
+  }, []);
 
   const loadPages = useCallback(async () => {
     try {
@@ -2728,11 +2696,11 @@ export function MonitorPage() {
       });
       const d = await r.json();
       if (d.ok) {
+        heavyBootstrapDoneRef.current = false;
         setAuthenticated(true);
         setSetupRequired(false);
         setCurrentStaff(d.staff || null);
-        writeCachedAuthStaff(d.staff || null);
-        if (isStaffAdmin(d.staff)) setCanManageStaff(true);
+        setCanManageStaff(isStaffAdmin(d.staff));
         setAuthStatus('');
       } else {
         setAuthStatus(d.error || 'Sai tài khoản hoặc mật khẩu');
@@ -2753,17 +2721,18 @@ export function MonitorPage() {
       });
       const d = await r.json();
       if (d.ok) {
+        heavyBootstrapDoneRef.current = false;
         setAuthenticated(true);
         setSetupRequired(false);
         setCurrentStaff(d.staff || null);
-        writeCachedAuthStaff(d.staff || null);
+        setCanManageStaff(isStaffAdmin(d.staff));
         setAuthStatus('');
       } else {
         if (d.already_setup || d.setup_required === false) {
           setSetupRequired(false);
           setAuthenticated(false);
           setCurrentStaff(null);
-          writeCachedAuthStaff(null);
+          setCanManageStaff(false);
         }
         setAuthStatus(d.error || 'Lỗi setup');
       }
@@ -2774,11 +2743,14 @@ export function MonitorPage() {
 
   async function logout() {
     await api('/api/auth/logout', { method: 'POST' });
+    currentStaffRef.current = null;
+    heavyBootstrapDoneRef.current = false;
     setAuthenticated(false);
     setCurrentStaff(null);
-    writeCachedAuthStaff(null);
+    setCanManageStaff(false);
     setStaffRows([]);
     setAllPosts([]);
+    setFacebookCookieContext(null);
     setHeaderSub('Đã đăng xuất');
   }
 

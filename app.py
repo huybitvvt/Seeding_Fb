@@ -219,6 +219,8 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
     SESSION_COOKIE_SECURE=os.environ.get('FLASK_ENV') == 'production' or bool(os.environ.get('RENDER')),
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+    SESSION_REFRESH_EACH_REQUEST=True,
 )
 
 _cors_origins = [
@@ -3514,6 +3516,7 @@ def _set_logged_in_staff(staff: dict) -> None:
     if old_token:
         _session_staff_cache.pop(old_token, None)
 
+    session.permanent = True
     session['staff_id'] = staff.get('id', '')
     session['staff_username'] = staff.get('username', '')
     session['staff_source'] = staff.get('_auth_source', 'local')
@@ -3532,14 +3535,10 @@ def _set_logged_in_staff(staff: dict) -> None:
 
 
 def _clear_logged_in_staff() -> None:
-    token = session.pop('staff_cache_token', None)
+    token = session.get('staff_cache_token', '')
     if token:
         _session_staff_cache.pop(token, None)
-    session.pop('staff_id', None)
-    session.pop('staff_username', None)
-    session.pop('staff_source', None)
-    session.pop('active_cookie_id', None)
-    session.pop('facebook_display_name', None)
+    session.clear()
 
 
 def _setup_required() -> bool:
@@ -6160,7 +6159,7 @@ def _require_auth_for_api():
         return None
     if request.method == 'GET' and request.path.rstrip('/') == '/api/groups/resolve':
         return None
-    public_endpoints = {'auth_status', 'auth_login', 'auth_setup', 'api_resolve_group', 'api_health'}
+    public_endpoints = {'auth_status', 'auth_login', 'auth_logout', 'auth_setup', 'api_resolve_group', 'api_health'}
     if request.path.startswith('/api/') and request.endpoint not in public_endpoints:
         if _setup_required():
             return jsonify({'ok': False, 'error': 'Cần setup tài khoản đầu tiên', 'setup_required': True}), 401
@@ -6249,6 +6248,8 @@ def api_health():
 @app.route('/api/auth/status')
 def auth_status():
     staff = _public_current_staff()
+    if staff and not session.permanent:
+        session.permanent = True
     return jsonify({
         'ok': True,
         'authenticated': bool(staff),
