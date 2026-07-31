@@ -91,6 +91,48 @@ class AuthSessionPersistenceTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertTrue(response.get_json()['auth_required'])
 
+    def test_auth_status_keeps_session_when_supabase_restore_temporarily_fails(self):
+        client = backend.app.test_client()
+        with client.session_transaction() as stored_session:
+            stored_session.permanent = True
+            stored_session['staff_id'] = 'staff-1'
+            stored_session['staff_username'] = 'test.staff'
+            stored_session['staff_source'] = 'supabase'
+
+        with (
+            patch.object(backend, '_staff_accounts', return_value=[]),
+            patch.object(backend, '_load_supabase_staff', return_value=({}, 'connection timeout')),
+        ):
+            response = client.get('/api/auth/status')
+
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.headers['Retry-After'], '3')
+        self.assertTrue(payload['auth_recovery_pending'])
+        self.assertNotIn('auth_required', payload)
+        with client.session_transaction() as stored_session:
+            self.assertEqual(stored_session['staff_id'], 'staff-1')
+
+    def test_protected_api_does_not_expire_session_on_supabase_timeout(self):
+        client = backend.app.test_client()
+        with client.session_transaction() as stored_session:
+            stored_session.permanent = True
+            stored_session['staff_id'] = 'staff-1'
+            stored_session['staff_username'] = 'test.staff'
+            stored_session['staff_source'] = 'supabase'
+
+        with (
+            patch.object(backend, '_setup_required', return_value=False),
+            patch.object(backend, '_staff_accounts', return_value=[]),
+            patch.object(backend, '_load_supabase_staff', return_value=({}, 'connection timeout')),
+        ):
+            response = client.get('/api/settings')
+
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 503)
+        self.assertTrue(payload['auth_recovery_pending'])
+        self.assertNotIn('auth_required', payload)
+
 
 if __name__ == '__main__':
     unittest.main()

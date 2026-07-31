@@ -17,11 +17,11 @@ export const AUTH_EXPIRED_EVENT = 'sale-fsolution:auth-expired';
 
 export function formatFetchError(err: unknown, fallback = 'Không gọi được backend'): string {
   if (err instanceof DOMException && err.name === 'AbortError') {
-    return 'Máy chủ chưa phản hồi kịp. Nếu Render đang khởi động, đợi một lát rồi thử lại.';
+    return 'Máy chủ chưa phản hồi kịp. Đợi một lát rồi thử lại.';
   }
   const message = err instanceof Error ? err.message : String(err || '');
   if (/aborted|abort/i.test(message)) {
-    return 'Máy chủ chưa phản hồi kịp. Nếu Render đang khởi động, đợi một lát rồi thử lại.';
+    return 'Máy chủ chưa phản hồi kịp. Đợi một lát rồi thử lại.';
   }
   return message || fallback;
 }

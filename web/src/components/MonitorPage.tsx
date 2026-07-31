@@ -517,27 +517,37 @@ export function MonitorPage() {
   const checkAuth = useCallback(async () => {
     setAuthChecked(false);
     try {
-      const r = await api('/api/auth/status', { timeoutMs: AUTH_TIMEOUT_MS });
-      if (!r.ok) {
-        setSetupRequired(false);
-        setAuthenticated(false);
-        setCurrentStaff(null);
-        setCanManageStaff(false);
-        heavyBootstrapDoneRef.current = false;
-        setAuthStatus(
-          r.status >= 500
-            ? 'Máy chủ chưa sẵn sàng. Vui lòng đợi một lát rồi đăng nhập lại.'
-            : `Không kiểm tra được đăng nhập (${r.status})`,
-        );
+      const maxRestoreRetries = 3;
+      for (let attempt = 0; attempt <= maxRestoreRetries; attempt += 1) {
+        const r = await api('/api/auth/status', { timeoutMs: AUTH_TIMEOUT_MS });
+        const d = await r.json().catch(() => ({}));
+        if (r.status === 503 && d.auth_recovery_pending && attempt < maxRestoreRetries) {
+          const retryAfterMs = Math.max(1000, Number(d.retry_after || 3) * 1000);
+          setAuthStatus(`Máy chủ đang khôi phục phiên (${attempt + 1}/${maxRestoreRetries})...`);
+          await new Promise((resolve) => window.setTimeout(resolve, retryAfterMs));
+          continue;
+        }
+        if (!r.ok) {
+          setSetupRequired(false);
+          setAuthenticated(false);
+          setCurrentStaff(null);
+          setCanManageStaff(false);
+          heavyBootstrapDoneRef.current = false;
+          setAuthStatus(
+            d.error || (r.status >= 500
+              ? 'Máy chủ chưa sẵn sàng. Vui lòng đợi một lát rồi kiểm tra lại.'
+              : `Không kiểm tra được đăng nhập (${r.status})`),
+          );
+          return;
+        }
+        setSetupRequired(!!d.setup_required && !d.simple_login);
+        setAuthenticated(!!d.authenticated);
+        setCurrentStaff(d.staff || null);
+        setCanManageStaff(isStaffAdmin(d.staff));
+        if (!d.authenticated) heavyBootstrapDoneRef.current = false;
+        setAuthStatus('');
         return;
       }
-      const d = await r.json();
-      setSetupRequired(!!d.setup_required && !d.simple_login);
-      setAuthenticated(!!d.authenticated);
-      setCurrentStaff(d.staff || null);
-      setCanManageStaff(isStaffAdmin(d.staff));
-      if (!d.authenticated) heavyBootstrapDoneRef.current = false;
-      setAuthStatus('');
     } catch (err: unknown) {
       setSetupRequired(false);
       setAuthenticated(false);
@@ -547,7 +557,7 @@ export function MonitorPage() {
       const aborted = err instanceof DOMException && err.name === 'AbortError';
       setAuthStatus(
         aborted
-          ? 'Máy chủ đang khởi động hoặc chưa phản hồi. Vui lòng đợi một lát rồi đăng nhập lại.'
+          ? 'Máy chủ đang khởi động hoặc chưa phản hồi. Vui lòng đợi một lát rồi kiểm tra lại.'
           : 'Không kết nối được server',
       );
     } finally {

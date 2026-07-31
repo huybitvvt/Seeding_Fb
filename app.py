@@ -16,7 +16,7 @@ from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 from xml.etree import ElementTree as ET
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request, session, copy_current_request_context, has_request_context
+from flask import Flask, jsonify, render_template, request, session, copy_current_request_context, has_request_context, g
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
@@ -3553,20 +3553,31 @@ def _current_staff() -> dict:
         return _staff_with_active_cookie(override)
     if not has_request_context():
         return {}
+
+    # A request can ask for the current staff multiple times. Reusing the first
+    # resolution avoids repeated Supabase calls and preserves the restore error
+    # so it cannot be mistaken for an expired login later in the same request.
+    resolved = getattr(g, 'current_staff_resolution', None)
+    if resolved is not None:
+        return resolved
+
     staff_id = session.get('staff_id', '')
     if not staff_id:
-        return {}
+        g.current_staff_resolution = {}
+        return g.current_staff_resolution
     local = next((item for item in _staff_accounts() if item.get('id') == staff_id and item.get('enabled', True)), {})
     if local:
-        return _staff_with_active_cookie(local)
+        g.current_staff_resolution = _staff_with_active_cookie(local)
+        return g.current_staff_resolution
 
     token = session.get('staff_cache_token', '')
     cached = _session_staff_cache.get(token) if token else None
     if cached and cached.get('id') == staff_id and cached.get('enabled', True):
-        return _staff_with_active_cookie(cached)
+        g.current_staff_resolution = _staff_with_active_cookie(cached)
+        return g.current_staff_resolution
 
     if session.get('staff_source') == 'supabase':
-        row, _ = _load_supabase_staff(session.get('staff_username', ''))
+        row, restore_error = _load_supabase_staff(session.get('staff_username', ''))
         if row:
             staff = _normalize_supabase_staff(row)
             if staff.get('id') == staff_id and staff.get('enabled', True):
@@ -3574,8 +3585,12 @@ def _current_staff() -> dict:
                 staff = _staff_with_active_cookie(staff)
                 _session_staff_cache[token] = staff
                 session['staff_cache_token'] = token
-                return staff
-    return {}
+                g.current_staff_resolution = staff
+                return g.current_staff_resolution
+        if restore_error:
+            g.current_staff_restore_error = restore_error
+    g.current_staff_resolution = {}
+    return g.current_staff_resolution
 
 
 def _current_staff_id() -> str:
@@ -6164,6 +6179,16 @@ def _require_auth_for_api():
         if _setup_required():
             return jsonify({'ok': False, 'error': 'Cần setup tài khoản đầu tiên', 'setup_required': True}), 401
         if not _current_staff():
+            if session.get('staff_id') and getattr(g, 'current_staff_restore_error', ''):
+                response = jsonify({
+                    'ok': False,
+                    'error': 'Máy chủ đang khôi phục phiên đăng nhập. Vui lòng thử lại sau vài giây.',
+                    'auth_recovery_pending': True,
+                    'retry_after': 3,
+                })
+                response.status_code = 503
+                response.headers['Retry-After'] = '3'
+                return response
             return jsonify({'ok': False, 'error': 'Vui lòng đăng nhập', 'auth_required': True}), 401
 
 
@@ -6248,6 +6273,17 @@ def api_health():
 @app.route('/api/auth/status')
 def auth_status():
     staff = _public_current_staff()
+    if not staff and session.get('staff_id') and getattr(g, 'current_staff_restore_error', ''):
+        response = jsonify({
+            'ok': False,
+            'authenticated': False,
+            'auth_recovery_pending': True,
+            'retry_after': 3,
+            'error': 'Máy chủ đang khôi phục phiên đăng nhập. Vui lòng thử lại sau vài giây.',
+        })
+        response.status_code = 503
+        response.headers['Retry-After'] = '3'
+        return response
     if staff and not session.permanent:
         session.permanent = True
     return jsonify({
