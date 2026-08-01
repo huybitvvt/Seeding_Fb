@@ -8,9 +8,9 @@ services:
     healthCheckPath: /api/health
     envVars:
       - key: WEB_UI_URL
-        value: https://seeding-beta.vercel.app
+        value: https://sale-fsolution.vercel.app
       - key: CORS_ORIGINS
-        value: https://seeding-beta.vercel.app,https://fb-moni.vercel.app,https://.*\.vercel\.app,http://localhost:3000,http://127.0.0.1:3000
+        value: https://sale-fsolution.vercel.app,https://seeding-beta.vercel.app,https://fb-moni.vercel.app,https://.*\.vercel\.app,http://localhost:3000,http://127.0.0.1:3000
       - key: SIMPLE_LOGIN_ONLY
         value: "true"
       - key: APP_SECRET_KEY

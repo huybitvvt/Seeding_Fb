@@ -187,7 +187,7 @@ Render Free se ngu neu 15 phut khong co request. Voi production hien tai, tao mo
 ```text
 Monitor type: HTTP(s)
 Friendly name: Sale F-Solution Backend
-URL: https://seedingfacebook.onrender.com/api/health
+URL: https://sale-fsolution.onrender.com/api/health
 Monitoring interval: 5 minutes
 ```
 
