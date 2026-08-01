@@ -2988,6 +2988,15 @@ button, input, select, textarea { font-family: inherit; }
   font-weight: 900;
 }
 .caption-variant-card textarea { min-height: 92px; resize: vertical; }
+.caption-variant-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.caption-variant-actions .btn-cancel {
+  min-height: 34px;
+  padding: 7px 12px;
+  font-size: 12px;
+}
 .seeding-target-card {
   position: sticky;
   top: 92px;

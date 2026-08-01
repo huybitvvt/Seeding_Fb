@@ -341,6 +341,20 @@ export function MarketingPipelinePanel({
     ].filter(Boolean).join('\n\n');
   }
 
+  async function copyAndOpenTarget(target: PublishTarget) {
+    const message = buildMessage(target);
+    const facebookUrl = target.type === 'group'
+      ? `https://www.facebook.com/groups/${target.id}`
+      : `https://www.facebook.com/${target.id}`;
+    window.open(facebookUrl, '_blank', 'noopener,noreferrer');
+    try {
+      await navigator.clipboard.writeText(message);
+      setLocalStatus(`Đã sao chép caption và mở ${target.name || target.id}. Dán nội dung để đăng trực tiếp trên Facebook.`);
+    } catch {
+      setLocalStatus(`Đã mở ${target.name || target.id}, nhưng trình duyệt chặn sao chép. Hãy copy nội dung trong ô caption.`);
+    }
+  }
+
   function appendHistory(row: Omit<HistoryRow, 'id' | 'createdAt'>) {
     setHistory((prev) => [{
       ...row,
@@ -691,7 +705,7 @@ export function MarketingPipelinePanel({
             <div className="seeding-caption-variants">
               <div className="seeding-section-title">Biến thể nội dung theo từng nơi đăng</div>
               {selectedTargets.map((target) => (
-                <label key={targetKey(target)} className="caption-variant-card">
+                <div key={targetKey(target)} className="caption-variant-card">
                   <span>{target.type === 'page' ? 'Page' : 'Nhóm'} · {target.name}</span>
                   <textarea
                     value={captionVariants[targetKey(target)] || ''}
@@ -701,7 +715,12 @@ export function MarketingPipelinePanel({
                     }))}
                     placeholder="AI sẽ tạo caption riêng cho nơi đăng này"
                   />
-                </label>
+                  <div className="caption-variant-actions">
+                    <button type="button" className="btn-cancel" onClick={() => void copyAndOpenTarget(target)}>
+                      📋 Sao chép &amp; mở Facebook
+                    </button>
+                  </div>
+                </div>
               ))}
             </div>
           ) : null}
