@@ -1016,9 +1016,49 @@ def _extract_media_urls(body: dict) -> list[str]:
     return urls
 
 
+def _facebook_publish_error(result: dict | None, target_type: str = '', fallback: str = '') -> tuple[str, dict]:
+    error = (result or {}).get('error') or {}
+    message = str(error.get('error_user_msg') or error.get('message') or fallback or 'Lỗi không xác định').strip()
+    code = error.get('code')
+    subcode = error.get('error_subcode')
+    error_type = str(error.get('type') or '').strip()
+    trace_id = str(error.get('fbtrace_id') or '').strip()
+    generic = message.lower() in ('an unknown error has occurred.', 'an unknown error has occurred', 'lỗi không xác định')
+
+    if str(target_type or '').strip().lower() == 'group' and generic:
+        message = (
+            'Facebook từ chối đăng tự động vào Group. Meta đã ngừng Groups API/publish_to_groups; '
+            'hãy thử riêng một nhóm để kiểm tra quyền, hoặc mở nhóm Facebook và đăng thủ công.'
+        )
+    elif code in (190, 368):
+        message = 'Cookie/token Facebook hết hạn hoặc không hợp lệ. Cập nhật cookie rồi thử lại.'
+    elif code == 200:
+        message = error.get('error_user_msg') or 'Tài khoản/Page không có quyền đăng vào nơi này.'
+    elif code in (4, 17, 32, 341, 613):
+        message = 'Facebook đang giới hạn tần suất đăng. Chờ vài phút rồi thử lại với ít nơi hơn.'
+
+    identifiers = []
+    if code is not None:
+        identifiers.append(f'Facebook #{code}')
+    if subcode is not None:
+        identifiers.append(f'subcode {subcode}')
+    if identifiers and not any(item.lower() in message.lower() for item in identifiers):
+        message = f"{message} ({', '.join(identifiers)})"
+
+    diagnostics = {
+        key: value for key, value in {
+            'facebook_error_code': code,
+            'facebook_error_subcode': subcode,
+            'facebook_error_type': error_type,
+            'facebook_trace_id': trace_id,
+        }.items() if value not in (None, '')
+    }
+    return message, diagnostics
+
+
 def _publish_content_pipeline_post(post: dict, targets: list[dict], dry_run: bool = False) -> dict:
-    message = _pipeline_post_message(post)
-    if not message:
+    default_message = _pipeline_post_message(post)
+    if not default_message:
         return {'ok': False, 'error': 'Bản nháp chưa có nội dung', 'results': []}
     media_url, native_video_url = _extract_post_media(post)
     media_urls = _extract_media_urls(post)
@@ -1028,7 +1068,9 @@ def _publish_content_pipeline_post(post: dict, targets: list[dict], dry_run: boo
         target_type = str((target or {}).get('type') or '').strip().lower()
         target_id = str((target or {}).get('id') or '').strip()
         target_name = str((target or {}).get('name') or '').strip()
+        message = str((target or {}).get('message') or (target or {}).get('caption') or default_message).strip()
         delivery = 'native_media' if media_urls else ('native_video' if native_video_url else ('link_preview' if media_url else 'text'))
+        target_api = None
         try:
             if dry_run:
                 ok_count += 1
@@ -1049,7 +1091,8 @@ def _publish_content_pipeline_post(post: dict, targets: list[dict], dry_run: boo
                 page_token = _page_token_from_cache(target_id)
                 if not page_token:
                     raise RuntimeError('Không lấy được Page token')
-                result = get_api(DEFAULT_GROUP).create_page_post(
+                target_api = get_api(DEFAULT_GROUP)
+                result = target_api.create_page_post(
                     target_id,
                     message,
                     page_token,
@@ -1062,7 +1105,8 @@ def _publish_content_pipeline_post(post: dict, targets: list[dict], dry_run: boo
                     raise RuntimeError('Thiếu group_id')
                 page_id = str((target or {}).get('page_id') or '').strip()
                 page_token = _page_token_from_cache(page_id) if page_id else None
-                result = get_api(target_id).create_post(
+                target_api = get_api(target_id)
+                result = target_api.create_post(
                     message,
                     page_token,
                     '' if media_urls else media_url,
@@ -1082,8 +1126,8 @@ def _publish_content_pipeline_post(post: dict, targets: list[dict], dry_run: boo
                     'native_video_error': (result or {}).get('_native_video_error'),
                 })
             else:
-                fb_error = (result or {}).get('error') or {}
-                err = fb_error.get('error_user_msg') or fb_error.get('message') or 'Lỗi không xác định'
+                api_error = getattr(target_api, 'last_graph_error', '') if target_api else ''
+                err, diagnostics = _facebook_publish_error(result, target_type or 'group', api_error)
                 results.append({
                     'ok': False,
                     'type': target_type or 'group',
@@ -1092,9 +1136,10 @@ def _publish_content_pipeline_post(post: dict, targets: list[dict], dry_run: boo
                     'error': err,
                     'delivery': delivery,
                     'native_video_error': (result or {}).get('_native_video_error'),
+                    **diagnostics,
                 })
         except Exception as e:
-            results.append({'ok': False, 'type': target_type or 'group', 'id': target_id, 'name': target_name, 'error': str(e), 'delivery': delivery})
+            results.append({'ok': False, 'type': target_type or 'group', 'id': target_id, 'name': target_name, 'error': friendly_graph_error(e), 'delivery': delivery})
     return {'ok': ok_count > 0, 'success_count': ok_count, 'failed_count': len(results) - ok_count, 'results': results}
 
 
@@ -6147,10 +6192,23 @@ def _get_ai_key_from_config(provider: str, config: dict) -> str:
 
 def _get_classifier() -> AIClassifier:
     cfg, _, _ = _effective_ai_config()
-    provider = cfg.get('provider', 'gemini')
-    default_model = PROVIDERS.get(provider, {}).get('default_model', DEFAULT_MODEL)
-    model = cfg.get('model', default_model) or default_model
+    configured_provider = str(cfg.get('provider') or 'gemini').strip().lower()
+    provider = configured_provider if configured_provider in PROVIDERS else 'gemini'
     api_key = _get_ai_key_from_config(provider, cfg)
+    if not api_key:
+        preferred = str(os.environ.get('AI_PROVIDER') or '').strip().lower()
+        candidates = [preferred, 'groq', 'openai', 'gemini', 'claude']
+        for candidate in dict.fromkeys(item for item in candidates if item in PROVIDERS):
+            candidate_key = _get_ai_key_from_config(candidate, cfg)
+            if candidate_key:
+                provider = candidate
+                api_key = candidate_key
+                break
+    default_model = PROVIDERS.get(provider, {}).get('default_model', DEFAULT_MODEL)
+    if provider == configured_provider:
+        model = cfg.get('model', default_model) or default_model
+    else:
+        model = os.environ.get('AI_MODEL') or default_model
     categories = cfg.get('categories', DEFAULT_CATEGORIES)
     return AIClassifier(provider, model, api_key, categories)
 
@@ -6266,6 +6324,8 @@ def api_health():
             'groups_resolve_public': True,
             'staff_list_refresh_v2': True,
             'channel_db_row_v3': True,
+            'per_target_ai_captions_v1': True,
+            'facebook_publish_diagnostics_v1': True,
         },
     })
 
@@ -6556,7 +6616,8 @@ def api_create_post():
         return jsonify({'ok': False, 'error': 'Thiếu group_id hoặc nội dung/ảnh/video'}), 400
     try:
         page_token = _pages_cache.get(page_id, {}).get('access_token') if page_id else None
-        result = get_api(group_id).create_post(
+        target_api = get_api(group_id)
+        result = target_api.create_post(
             message,
             page_token,
             '' if media_urls else media_url,
@@ -6573,10 +6634,10 @@ def api_create_post():
                 'native_video_error': (result or {}).get('_native_video_error'),
                 'target': {'type': 'group', 'id': group_id},
             })
-        err = (result or {}).get('error', {}).get('message', 'Lỗi không xác định')
-        return jsonify({'ok': False, 'error': err, 'delivery': delivery, 'native_video_error': (result or {}).get('_native_video_error'), 'target': {'type': 'group', 'id': group_id}})
+        err, diagnostics = _facebook_publish_error(result, 'group', getattr(target_api, 'last_graph_error', ''))
+        return jsonify({'ok': False, 'error': err, 'delivery': delivery, 'native_video_error': (result or {}).get('_native_video_error'), 'target': {'type': 'group', 'id': group_id}, **diagnostics})
     except Exception as e:
-        return jsonify({'ok': False, 'error': str(e), 'target': {'type': 'group', 'id': group_id}}), 500
+        return jsonify({'ok': False, 'error': friendly_graph_error(e), 'target': {'type': 'group', 'id': group_id}}), 500
 
 
 @app.route('/api/publish', methods=['POST'])
@@ -6604,6 +6665,7 @@ def api_publish_targets():
             'id': target_id,
             'name': str(item.get('name') or '').strip(),
             'page_id': str(item.get('page_id') or '').strip(),
+            'message': str(item.get('message') or item.get('caption') or '').strip(),
         })
 
     if not targets:
@@ -11262,10 +11324,16 @@ def ai_models():
 @app.route('/api/ai/config', methods=['GET'])
 def ai_config_get():
     safe, storage, warning = _effective_ai_config()
+    runtime_classifier = _get_classifier()
     safe_keys = {}
-    for k, v in safe.get('keys', {}).items():
+    for k in PROVIDERS:
+        v = _get_ai_key_from_config(k, safe)
         safe_keys[k] = ('***' + v[-4:]) if v and len(v) > 4 else ('***' if v else '')
     safe.pop('keys', None)
+    if runtime_classifier.api_key and not safe_keys.get(str(safe.get('provider') or '')):
+        safe['provider'] = runtime_classifier.provider
+        safe['model'] = runtime_classifier.model
+        safe['using_server_key'] = True
     safe['keys_masked'] = safe_keys
     safe['storage'] = storage
     if warning:

@@ -1675,7 +1675,7 @@ export function MonitorPage() {
     const selectedGroups = groups.filter((g) => postSelected[g]);
     const message = [postTitle.trim() ? `Tiêu đề: ${postTitle.trim()}` : '', postContent.trim(), postSchedule.trim() ? `Lịch đăng: ${postSchedule.trim()}` : ''].filter(Boolean).join('\n\n');
     const mediaUrls = postMedia.map((item) => item.url).filter(Boolean);
-    if (!postTitle.trim() || !postContent.trim()) { setPostResult('? Nhập đủ Tiêu đề và Nội dung'); return; }
+    if (!postContent.trim()) { setPostResult('❌ Nhập Nội dung bài viết'); return; }
     if (!selectedGroups.length) {
       setPostResult('❌ Chọn ít nhất 1 nhóm');
       return;
@@ -1684,6 +1684,7 @@ export function MonitorPage() {
     setPostResult(`⏳ Đang đăng vào ${selectedGroups.length} nhóm...`);
     let ok = 0;
     let fail = 0;
+    const errors: string[] = [];
     for (const group_id of selectedGroups) {
       try {
         const r = await api('/api/post', {
@@ -1693,9 +1694,13 @@ export function MonitorPage() {
         });
         const d = await r.json();
         if (d.ok) ok++;
-        else fail++;
-      } catch {
+        else {
+          fail++;
+          errors.push(`${groupNames[group_id] || group_id}: ${d.error || 'Lỗi không xác định'}`);
+        }
+      } catch (err: unknown) {
         fail++;
+        errors.push(`${groupNames[group_id] || group_id}: ${formatFetchError(err)}`);
       }
       setPostResult(`⏳ Đã đăng ${ok + fail}/${selectedGroups.length} (✅${ok} ❌${fail})`);
     }
@@ -1707,7 +1712,7 @@ export function MonitorPage() {
       setPostSchedule('');
       setTimeout(() => setPostModal(false), 2000);
     } else {
-      setPostResult(`✅ ${ok} thành công, ❌ ${fail} thất bại`);
+      setPostResult(`✅ ${ok} thành công, ❌ ${fail} thất bại. ${errors.slice(0, 3).join(' · ')}`);
     }
     setPostSubmitting(false);
   }

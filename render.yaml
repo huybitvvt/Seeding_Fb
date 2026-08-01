@@ -15,6 +15,10 @@ services:
         value: "true"
       - key: APP_SECRET_KEY
         generateValue: true
+      - key: AI_PROVIDER
+        value: groq
+      - key: GROQ_API_KEY
+        sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_PUBLISHABLE_KEY

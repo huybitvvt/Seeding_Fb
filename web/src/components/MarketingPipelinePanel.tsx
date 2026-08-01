@@ -408,7 +408,12 @@ export function MarketingPipelinePanel({
         media_url: mediaUrls.length ? '' : detectedMedia.mediaUrl,
         native_video_url: mediaUrls.length ? '' : detectedMedia.nativeVideoUrl,
         media_urls: mediaUrls,
-        targets: selectedTargets.map((t) => ({ type: t.type, id: t.id, name: t.name })),
+        targets: selectedTargets.map((t) => ({
+          type: t.type,
+          id: t.id,
+          name: t.name,
+          message: buildMessage(t),
+        })),
       };
       const res = await api('/api/publish', {
         method: 'POST',
@@ -487,7 +492,12 @@ export function MarketingPipelinePanel({
           media_urls: mediaUrls,
           hashtags,
           scheduled_at: scheduledAt,
-          targets: selectedTargets.map((t) => ({ type: t.type, id: t.id, name: t.name })),
+          targets: selectedTargets.map((t) => ({
+            type: t.type,
+            id: t.id,
+            name: t.name,
+            message: buildMessage(t),
+          })),
           status: 'scheduled',
         }),
         timeoutMs: 60000,
@@ -763,6 +773,7 @@ export function MarketingPipelinePanel({
 
           <div className="target-note">
             File ảnh/video upload từ máy sẽ đăng dạng media thật; link YouTube/TikTok hoặc link dán tay sẽ đăng dạng link preview.
+            Facebook Page vẫn hỗ trợ đăng qua API; Group có thể bị Meta từ chối do Groups API đã ngừng hỗ trợ.
           </div>
         </aside>
       </div>
