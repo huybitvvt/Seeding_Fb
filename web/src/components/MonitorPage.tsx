@@ -1681,40 +1681,54 @@ export function MonitorPage() {
       return;
     }
     setPostSubmitting(true);
-    setPostResult(`⏳ Đang đăng vào ${selectedGroups.length} nhóm...`);
-    let ok = 0;
-    let fail = 0;
-    const errors: string[] = [];
-    for (const group_id of selectedGroups) {
-      try {
-        const r = await api('/api/post', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ group_id, page_id: postPageId, message: postCaptions[group_id]?.trim() || message, media_urls: mediaUrls }),
-        });
-        const d = await r.json();
-        if (d.ok) ok++;
-        else {
-          fail++;
-          errors.push(`${groupNames[group_id] || group_id}: ${d.error || 'Lỗi không xác định'}`);
-        }
-      } catch (err: unknown) {
-        fail++;
-        errors.push(`${groupNames[group_id] || group_id}: ${formatFetchError(err)}`);
+    setPostResult(
+      selectedGroups.length > 1
+        ? `⏳ Đang xếp hàng ${selectedGroups.length} nhóm, mỗi lượt cách nhau 5 phút...`
+        : '⏳ Đang đăng bài...'
+    );
+    try {
+      const r = await api('/api/publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message,
+          media_urls: mediaUrls,
+          stagger_minutes: selectedGroups.length > 1 ? 5 : 0,
+          targets: selectedGroups.map((groupId) => ({
+            type: 'group',
+            id: groupId,
+            name: groupNames[groupId] || groupId,
+            page_id: postPageId,
+            message: postCaptions[groupId]?.trim() || message,
+          })),
+        }),
+        timeoutMs: PUBLISH_TIMEOUT_MS,
+      });
+      const data = await r.json().catch(() => ({ ok: false, error: `Server lỗi ${r.status}` }));
+      if (data.queued) {
+        setPostResult(`✅ Đã xếp hàng ${data.target_count || selectedGroups.length} nhóm. Lượt đầu chạy trong khoảng 30 giây, sau đó cách nhau 5 phút.`);
+        setPostTitle('');
+        setPostContent('');
+        setPostMedia([]);
+        setPostSchedule('');
+        setTimeout(() => setPostModal(false), 3500);
+      } else if (Array.isArray(data.results)) {
+        const ok = data.results.filter((item: { ok?: boolean }) => item.ok).length;
+        const failed = data.results.filter((item: { ok?: boolean }) => !item.ok);
+        const errors = failed.map((item: { name?: string; id?: string; error?: string }) => `${item.name || item.id}: ${item.error || 'Lỗi không xác định'}`);
+        setPostResult(
+          failed.length
+            ? `✅ ${ok} thành công, ❌ ${failed.length} thất bại. ${errors.slice(0, 3).join(' · ')}`
+            : `✅ Đăng thành công ${ok}/${data.results.length} nhóm!`
+        );
+      } else {
+        setPostResult(`❌ ${data.error || 'Không đăng được bài'}`);
       }
-      setPostResult(`⏳ Đã đăng ${ok + fail}/${selectedGroups.length} (✅${ok} ❌${fail})`);
+    } catch (err: unknown) {
+      setPostResult(`❌ ${formatFetchError(err)}`);
+    } finally {
+      setPostSubmitting(false);
     }
-    if (fail === 0) {
-      setPostResult(`✅ Đăng thành công ${ok}/${selectedGroups.length} nhóm!`);
-      setPostTitle('');
-      setPostContent('');
-      setPostMedia([]);
-      setPostSchedule('');
-      setTimeout(() => setPostModal(false), 2000);
-    } else {
-      setPostResult(`✅ ${ok} thành công, ❌ ${fail} thất bại. ${errors.slice(0, 3).join(' · ')}`);
-    }
-    setPostSubmitting(false);
   }
 
   async function uploadPostMedia(files?: FileList | null) {
@@ -3295,7 +3309,11 @@ export function MonitorPage() {
               Huỷ
             </button>
             <button type="button" className="btn-submit" disabled={postSubmitting || postUploadingMedia} onClick={() => void submitPost()}>
-              Đăng bài
+              {postSubmitting
+                ? 'Đang xử lý...'
+                : groups.filter((groupId) => postSelected[groupId]).length > 1
+                  ? 'Đăng lần lượt 5 phút'
+                  : 'Đăng bài'}
             </button>
           </div>
         </div>

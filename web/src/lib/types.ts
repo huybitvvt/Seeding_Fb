@@ -179,6 +179,8 @@ export type ContentPipelinePost = {
   status?: 'draft' | 'scheduled' | 'posted' | 'failed' | string;
   scheduled_at?: string;
   scheduled_targets?: { type?: 'group' | 'page' | string; id?: string; name?: string }[];
+  scheduled_target_index?: number;
+  publish_interval_minutes?: number;
   publish_results?: { ok?: boolean; type?: string; id?: string; name?: string; post_id?: string; error?: string }[];
   published_at?: string;
   created_by_staff_name?: string;

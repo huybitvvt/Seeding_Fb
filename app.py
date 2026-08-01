@@ -1143,6 +1143,55 @@ def _publish_content_pipeline_post(post: dict, targets: list[dict], dry_run: boo
     return {'ok': ok_count > 0, 'success_count': ok_count, 'failed_count': len(results) - ok_count, 'results': results}
 
 
+def _normalize_publish_interval_minutes(value) -> int:
+    try:
+        minutes = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return min(max(minutes, 0), 24 * 60)
+
+
+def _utc_iso(value: datetime | None = None) -> str:
+    return (value or datetime.now(timezone.utc)).isoformat(timespec='seconds').replace('+00:00', 'Z')
+
+
+def _enqueue_staggered_publish(body: dict, targets: list[dict], interval_minutes: int) -> dict:
+    global _content_pipeline
+    message = str(body.get('message') or body.get('content') or '').strip()
+    media_url, native_video_url = _extract_post_media(body)
+    media_urls = _extract_media_urls(body)
+    staff = _current_staff()
+    now = _utc_iso()
+    post = {
+        'id': f"queue_{uuid.uuid4().hex[:12]}",
+        'article_title': str(body.get('title') or '').strip() or message[:100],
+        'article_url': media_url or native_video_url or (media_urls[0] if media_urls else ''),
+        'source_name': 'Staggered publisher',
+        'format': 'manual',
+        'content': message,
+        'media_url': '' if media_urls else media_url,
+        'native_video_url': '' if media_urls else native_video_url,
+        'media_urls': media_urls,
+        'hashtags': '',
+        'status': 'scheduled',
+        'scheduled_at': now,
+        'scheduled_targets': targets,
+        'scheduled_target_index': 0,
+        'publish_interval_minutes': interval_minutes,
+        'publish_results': [],
+        'created_by_staff_id': staff.get('id', ''),
+        'created_by_staff_name': staff.get('name', ''),
+        'created_at': now,
+        'updated_at': now,
+    }
+    with _scheduled_posts_lock:
+        posts = list(_content_pipeline.get('posts') or [])
+        posts.insert(0, post)
+        _content_pipeline['posts'] = posts[:250]
+        _save_content_pipeline()
+    return post
+
+
 def _rss_child_text(item, names: tuple[str, ...]) -> str:
     for name in names:
         node = item.find(name)
@@ -6326,6 +6375,7 @@ def api_health():
             'channel_db_row_v3': True,
             'per_target_ai_captions_v1': True,
             'facebook_publish_diagnostics_v1': True,
+            'staggered_publish_queue_v1': True,
         },
     })
 
@@ -6672,6 +6722,20 @@ def api_publish_targets():
         return jsonify({'ok': False, 'error': 'Danh sách target không hợp lệ'}), 400
 
     dry_run = bool(body.get('dry_run') or body.get('dryRun'))
+    interval_minutes = _normalize_publish_interval_minutes(
+        body.get('stagger_minutes') or body.get('interval_minutes') or body.get('publish_interval_minutes')
+    )
+    if interval_minutes and len(targets) > 1 and not dry_run:
+        post = _enqueue_staggered_publish(body, targets, interval_minutes)
+        return jsonify({
+            'ok': True,
+            'queued': True,
+            'queue_id': post.get('id'),
+            'target_count': len(targets),
+            'completed_count': 0,
+            'interval_minutes': interval_minutes,
+            'first_scheduled_at': post.get('scheduled_at'),
+        }), 202
     result = _publish_content_pipeline_post({
         'content': message,
         'hashtags': '',
@@ -11843,6 +11907,9 @@ def content_pipeline_post_create():
     hashtags = str(body.get('hashtags') or '').strip()
     scheduled_at = str(body.get('scheduled_at') or body.get('scheduledAt') or '').strip()
     targets = body.get('targets') or []
+    interval_minutes = _normalize_publish_interval_minutes(
+        body.get('publish_interval_minutes') or body.get('interval_minutes') or body.get('stagger_minutes')
+    )
     status = str(body.get('status') or ('scheduled' if scheduled_at else 'draft')).strip() or 'draft'
     if not title or not content:
         return jsonify({'ok': False, 'error': 'Nhập đủ tiêu đề và nội dung'}), 400
@@ -11866,6 +11933,9 @@ def content_pipeline_post_create():
         'status': status,
         'scheduled_at': scheduled_at,
         'scheduled_targets': targets if isinstance(targets, list) else [],
+        'scheduled_target_index': 0,
+        'publish_interval_minutes': interval_minutes,
+        'publish_results': [],
         'created_by_staff_id': staff.get('id', ''),
         'created_by_staff_name': staff.get('name', ''),
         'created_at': now,
@@ -11889,6 +11959,8 @@ def content_pipeline_post_update(post_id):
                 'status',
                 'scheduled_at',
                 'scheduled_targets',
+                'scheduled_target_index',
+                'publish_interval_minutes',
                 'publish_results',
                 'published_at',
                 'article_title',
@@ -11937,6 +12009,9 @@ def content_pipeline_post_schedule(post_id):
     body = request.get_json(silent=True) or {}
     scheduled_at = str(body.get('scheduled_at') or '').strip()
     targets = body.get('targets') or []
+    interval_minutes = _normalize_publish_interval_minutes(
+        body.get('publish_interval_minutes') or body.get('interval_minutes') or body.get('stagger_minutes')
+    )
     if not _parse_iso_datetime(scheduled_at):
         return jsonify({'ok': False, 'error': 'Thời gian lên lịch không hợp lệ'}), 400
     if not isinstance(targets, list) or not targets:
@@ -11946,6 +12021,9 @@ def content_pipeline_post_schedule(post_id):
             post['status'] = 'scheduled'
             post['scheduled_at'] = scheduled_at
             post['scheduled_targets'] = targets
+            post['scheduled_target_index'] = 0
+            post['publish_interval_minutes'] = interval_minutes
+            post['publish_results'] = []
             post['updated_at'] = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
             _save_content_pipeline()
             return jsonify({'ok': True, 'post': post})
@@ -11976,18 +12054,67 @@ def _run_due_scheduled_posts() -> dict:
                 continue
             targets = post.get('scheduled_targets') or []
             staff = _staff_for_scheduled_post(post)
+            interval_minutes = _normalize_publish_interval_minutes(post.get('publish_interval_minutes'))
+            try:
+                target_index = max(0, int(post.get('scheduled_target_index') or 0))
+            except (TypeError, ValueError):
+                target_index = 0
+            is_staggered = interval_minutes > 0 and isinstance(targets, list) and bool(targets)
+            if is_staggered and target_index >= len(targets):
+                successes = len([item for item in (post.get('publish_results') or []) if item.get('ok')])
+                failures = len(post.get('publish_results') or []) - successes
+                post['status'] = 'posted' if failures == 0 else ('failed' if successes == 0 else 'partial')
+                post['published_at'] = _utc_iso()
+                post['updated_at'] = post['published_at']
+                results.append({'id': post.get('id'), 'ok': failures == 0, 'completed_count': len(targets), 'target_count': len(targets)})
+                ran += 1
+                continue
+            due_targets = targets[target_index:target_index + 1] if is_staggered else targets
             if staff:
                 _runtime_staff_context.staff = staff
-                result = _publish_content_pipeline_post(post, targets if isinstance(targets, list) else [])
+                result = _publish_content_pipeline_post(post, due_targets if isinstance(due_targets, list) else [])
             else:
                 if hasattr(_runtime_staff_context, 'staff'):
                     delattr(_runtime_staff_context, 'staff')
                 result = {'ok': False, 'error': 'Không tìm thấy nhân sự/cookie đã tạo lịch', 'results': []}
-            post['publish_results'] = result.get('results') or []
-            post['published_at'] = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
-            post['status'] = 'posted' if result.get('ok') else 'failed'
-            post['updated_at'] = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
-            results.append({'id': post.get('id'), **result})
+            result_rows = list(result.get('results') or [])
+            if is_staggered and not result_rows and due_targets:
+                target = due_targets[0]
+                result_rows = [{
+                    'ok': False,
+                    'type': target.get('type') or 'group',
+                    'id': target.get('id') or '',
+                    'name': target.get('name') or '',
+                    'error': result.get('error') or 'Không đăng được bài',
+                }]
+            previous_results = list(post.get('publish_results') or []) if is_staggered else []
+            post['publish_results'] = previous_results + result_rows
+            now_iso = _utc_iso()
+            post['updated_at'] = now_iso
+            if is_staggered:
+                next_index = target_index + 1
+                post['scheduled_target_index'] = next_index
+                if next_index < len(targets):
+                    next_at = datetime.now(timezone.utc) + timedelta(minutes=interval_minutes)
+                    post['scheduled_at'] = _utc_iso(next_at)
+                    post['status'] = 'scheduled'
+                else:
+                    successes = len([item for item in post['publish_results'] if item.get('ok')])
+                    failures = len(post['publish_results']) - successes
+                    post['published_at'] = now_iso
+                    post['status'] = 'posted' if failures == 0 else ('failed' if successes == 0 else 'partial')
+                results.append({
+                    'id': post.get('id'),
+                    **result,
+                    'queued': next_index < len(targets),
+                    'completed_count': next_index,
+                    'target_count': len(targets),
+                    'next_scheduled_at': post.get('scheduled_at') if next_index < len(targets) else '',
+                })
+            else:
+                post['published_at'] = now_iso
+                post['status'] = 'posted' if result.get('ok') else 'failed'
+                results.append({'id': post.get('id'), **result})
             ran += 1
         if ran:
             _save_content_pipeline()

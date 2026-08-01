@@ -51,6 +51,7 @@ type HistoryRow = {
 };
 
 const HISTORY_KEY = 'seeding-post-history-v2';
+const PUBLISH_INTERVAL_MINUTES = 5;
 
 const PARTNER_POST_PRESETS = [
   {
@@ -109,6 +110,7 @@ function displayPostStatus(status: string) {
   const value = (status || '').trim().toLowerCase();
   if (value === 'posted') return 'Đã đăng';
   if (value === 'scheduled') return 'Đã lưu lịch';
+  if (value === 'partial') return 'Đã đăng một phần';
   if (value === 'failed') return 'Lỗi';
   if (value === 'draft') return 'Bản nháp';
   return status || '-';
@@ -226,7 +228,9 @@ export function MarketingPipelinePanel({
         id: target.id || '-',
         name: target.name || target.id || '-',
       })),
-      status: post.status || 'draft',
+      status: post.status === 'scheduled' && post.publish_interval_minutes
+        ? `Đang chờ ${post.scheduled_target_index || 0}/${post.scheduled_targets?.length || 0} · ${post.publish_interval_minutes} phút/lượt`
+        : post.status || 'draft',
       results: (post.publish_results || []).map((item) => ({
         ok: !!item.ok,
         target: { type: item.type === 'page' ? 'page' : 'group', id: item.id || '', name: item.name || item.id || '' },
@@ -412,12 +416,17 @@ export function MarketingPipelinePanel({
       return;
     }
     setPublishing(true);
-    setLocalStatus(`Đang đăng tới ${selectedTargets.length} nơi...`);
+    setLocalStatus(
+      selectedTargets.length > 1
+        ? `Đang xếp hàng ${selectedTargets.length} nơi, mỗi lượt cách nhau ${PUBLISH_INTERVAL_MINUTES} phút...`
+        : 'Đang đăng bài...'
+    );
     try {
       // Tự động phát hiện video URL để gửi native_video_url thay vì link preview
       const mediaUrls = postMedia.map((item) => item.url).filter(Boolean);
       const detectedMedia = detectVideoMedia(mediaUrl);
       const body = {
+        title,
         message: baseMessage,
         media_url: mediaUrls.length ? '' : detectedMedia.mediaUrl,
         native_video_url: mediaUrls.length ? '' : detectedMedia.nativeVideoUrl,
@@ -428,6 +437,7 @@ export function MarketingPipelinePanel({
           name: t.name,
           message: buildMessage(t),
         })),
+        stagger_minutes: selectedTargets.length > 1 ? PUBLISH_INTERVAL_MINUTES : 0,
       };
       const res = await api('/api/publish', {
         method: 'POST',
@@ -437,7 +447,12 @@ export function MarketingPipelinePanel({
       });
       const payload = await readPayload(res);
 
-      if (payload.results) {
+      if (payload.queued) {
+        setLocalStatus(
+          `Đã xếp hàng ${payload.target_count || selectedTargets.length} nơi. `
+          + `Lượt đầu chạy trong khoảng 30 giây, các lượt sau cách nhau ${payload.interval_minutes || PUBLISH_INTERVAL_MINUTES} phút.`
+        );
+      } else if (payload.results) {
         const results: PublishResult[] = payload.results.map((r: any) => ({
           ok: !!r.ok,
           target: { type: r.type || 'group', id: r.id || '', name: r.name || '' },
@@ -512,13 +527,18 @@ export function MarketingPipelinePanel({
             name: t.name,
             message: buildMessage(t),
           })),
+          publish_interval_minutes: selectedTargets.length > 1 ? PUBLISH_INTERVAL_MINUTES : 0,
           status: 'scheduled',
         }),
         timeoutMs: 60000,
       });
       const payload = await readPayload(res);
       if (!res.ok || !payload.ok) throw new Error(payload.error || 'Không lưu được lịch đăng');
-      setLocalStatus('Đã lưu lịch đăng. Backend sẽ tự kiểm tra và đăng khi tới giờ.');
+      setLocalStatus(
+        selectedTargets.length > 1
+          ? `Đã lưu lịch. Tới giờ hệ thống đăng lần lượt, mỗi nơi cách nhau ${PUBLISH_INTERVAL_MINUTES} phút.`
+          : 'Đã lưu lịch đăng. Backend sẽ tự kiểm tra và đăng khi tới giờ.'
+      );
       void onReload();
     } catch (err: unknown) {
       setLocalStatus(`Lỗi đặt lịch: ${formatFetchError(err)}`);
@@ -688,7 +708,11 @@ export function MarketingPipelinePanel({
 
           <div className="seeding-toolbar">
             <button type="button" className="btn-submit" disabled={publishing} onClick={() => void publishNow()}>
-              {publishing ? 'Đang đăng...' : '📣 Đăng ngay'}
+              {publishing
+                ? 'Đang xử lý...'
+                : selectedTargets.length > 1
+                  ? `📣 Đăng lần lượt ${PUBLISH_INTERVAL_MINUTES} phút`
+                  : '📣 Đăng ngay'}
             </button>
             <button type="button" className="btn-cancel" disabled={publishing} onClick={() => void scheduleDraft()}>
               ⏰ Đặt lịch

@@ -1,5 +1,7 @@
 import os
 import unittest
+from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 
 import app as backend
@@ -58,6 +60,59 @@ class PostPublishingTests(unittest.TestCase):
         self.assertEqual(classifier.provider, 'groq')
         self.assertEqual(classifier.model, 'llama-3.3-70b-versatile')
         self.assertEqual(classifier.api_key, 'server-groq-key')
+
+    def test_staggered_scheduler_publishes_one_target_every_run(self):
+        previous_pipeline = deepcopy(backend._content_pipeline)
+        post = {
+            'id': 'queue-test',
+            'content': 'Nội dung',
+            'status': 'scheduled',
+            'scheduled_at': backend._utc_iso(datetime.now(timezone.utc) - timedelta(minutes=1)),
+            'scheduled_targets': [
+                {'type': 'group', 'id': 'group-1', 'name': 'Nhóm 1'},
+                {'type': 'group', 'id': 'group-2', 'name': 'Nhóm 2'},
+            ],
+            'scheduled_target_index': 0,
+            'publish_interval_minutes': 5,
+            'publish_results': [],
+        }
+        called_targets = []
+
+        def fake_publish(_post, targets):
+            target = targets[0]
+            called_targets.append(target['id'])
+            return {
+                'ok': True,
+                'success_count': 1,
+                'failed_count': 0,
+                'results': [{**target, 'ok': True, 'post_id': f"posted-{target['id']}"}],
+            }
+
+        try:
+            backend._content_pipeline = {'sources': [], 'articles': [], 'posts': [post]}
+            with (
+                patch.object(backend, '_staff_for_scheduled_post', return_value={'id': 'staff-1'}),
+                patch.object(backend, '_publish_content_pipeline_post', side_effect=fake_publish),
+                patch.object(backend, '_save_content_pipeline'),
+            ):
+                first = backend._run_due_scheduled_posts()
+                self.assertEqual(first['ran'], 1)
+                self.assertEqual(called_targets, ['group-1'])
+                self.assertEqual(post['status'], 'scheduled')
+                self.assertEqual(post['scheduled_target_index'], 1)
+                self.assertEqual(len(post['publish_results']), 1)
+                self.assertGreater(backend._parse_iso_datetime(post['scheduled_at']), datetime.now(timezone.utc))
+
+                post['scheduled_at'] = backend._utc_iso(datetime.now(timezone.utc) - timedelta(minutes=1))
+                second = backend._run_due_scheduled_posts()
+
+            self.assertEqual(second['ran'], 1)
+            self.assertEqual(called_targets, ['group-1', 'group-2'])
+            self.assertEqual(post['status'], 'posted')
+            self.assertEqual(post['scheduled_target_index'], 2)
+            self.assertEqual(len(post['publish_results']), 2)
+        finally:
+            backend._content_pipeline = previous_pipeline
 
 
 if __name__ == '__main__':
