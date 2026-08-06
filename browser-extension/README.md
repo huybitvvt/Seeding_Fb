@@ -21,7 +21,7 @@ Khi source có thay đổi extension:
 
 1. Mở `chrome://extensions`.
 2. Bấm nút reload trên `Seeding Fsolution Bridge` hoặc bấm `Update`.
-3. Đảm bảo version hiện tại là `0.1.19` trở lên.
+3. Đảm bảo version hiện tại là `0.1.20` trở lên.
 4. Tải lại web Seeding Fsolution trước khi test lại `TikTok CMT`.
 
 ## Lưu ý vận hành

@@ -104,28 +104,21 @@
     range.selectNodeContents(editor);
     selection.removeAllRanges();
     selection.addRange(range);
-    let inserted = false;
     try {
-      inserted = document.execCommand('insertText', false, message);
+      document.execCommand('insertText', false, message);
     } catch {
-      inserted = false;
+      // Fall through to the DOM-based fallback below.
     }
-    if (!inserted || !normalize(editor.innerText || editor.textContent)) {
-      editor.textContent = message;
-      editor.dispatchEvent(new InputEvent('beforeinput', {
-        bubbles: true,
-        cancelable: true,
-        inputType: 'insertText',
-        data: message,
-      }));
+    if (normalize(editor.innerText || editor.textContent) !== normalize(message)) {
+      editor.replaceChildren(document.createTextNode(message));
       editor.dispatchEvent(new InputEvent('input', {
         bubbles: true,
         inputType: 'insertText',
-        data: message,
+        data: null,
       }));
     }
     editor.dispatchEvent(new Event('change', { bubbles: true }));
-    return normalize(editor.innerText || editor.textContent).length > 0;
+    return normalize(editor.innerText || editor.textContent) === normalize(message);
   }
 
   function normalizeMedia(items) {
@@ -246,25 +239,38 @@
 
     const transfer = new DataTransfer();
     files.forEach((file) => transfer.items.add(file));
+    const mediaNodeCountBefore = dialog.querySelectorAll('img, video').length;
+    let assignedCount = 0;
     try {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files')?.set;
       if (setter) setter.call(input, transfer.files);
       else input.files = transfer.files;
+      assignedCount = Number(input.files?.length || 0);
+      if (assignedCount < files.length) {
+        return { ok: false, error: 'Facebook không nhận đủ danh sách file ảnh/video.' };
+      }
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
     } catch (error) {
       return { ok: false, error: `Facebook không nhận danh sách media: ${error?.message || String(error)}` };
     }
 
-    for (let attempt = 0; attempt < 40; attempt += 1) {
+    for (let attempt = 0; attempt < 24; attempt += 1) {
       if (!dialog?.isConnected) return { ok: false, error: 'Hộp soạn bài Facebook đã đóng khi đang gắn media.' };
-      if (Number(input.files?.length || 0) >= files.length) {
-        await sleep(1500);
-        return { ok: true, attachedCount: files.length };
+      const mediaNodeCount = dialog.querySelectorAll('img, video').length;
+      const hasMediaControl = Array.from(dialog.querySelectorAll('button, [role="button"], [aria-label]')).some((node) => {
+        const label = normalize(`${node.getAttribute('aria-label') || ''} ${node.innerText || node.textContent || ''}`).toLowerCase();
+        return ['xóa ảnh', 'xóa video', 'remove photo', 'remove video', 'chỉnh sửa', 'edit photo'].some((phrase) => label.includes(phrase));
+      });
+      if (mediaNodeCount > mediaNodeCountBefore || hasMediaControl) {
+        return { ok: true, attachedCount: assignedCount, previewDetected: true };
       }
       await sleep(250);
     }
-    return { ok: false, error: 'Facebook chưa nhận file ảnh/video. Không tiếp tục để tránh đăng thiếu media.' };
+    // Facebook often consumes and clears input.files immediately after accepting the
+    // change event. The successful assignment above is the reliable hand-off signal;
+    // the employee still verifies the Facebook preview before clicking Post.
+    return { ok: true, attachedCount: assignedCount, previewDetected: false };
   }
 
   async function preparePost(payload) {
@@ -322,7 +328,10 @@
     const mediaHint = mediaResult.attachedCount
       ? ` và chọn ${mediaResult.attachedCount} media`
       : '';
-    showStatus(`Đã điền caption${mediaHint} cho ${state.groupName}.\nKiểm tra preview và tự bấm Đăng. Xong sẽ chuyển ngay sang Group tiếp theo.`);
+    const previewHint = mediaResult.attachedCount && !mediaResult.previewDetected
+      ? '\nFile đã được chuyển cho Facebook; đợi preview xuất hiện rồi mới bấm Đăng.'
+      : '';
+    showStatus(`Đã điền caption${mediaHint} cho ${state.groupName}.${previewHint}\nKiểm tra preview và tự bấm Đăng. Xong sẽ chuyển ngay sang Group tiếp theo.`);
     sendProgress('ready', { mediaAttachedCount: mediaResult.attachedCount });
     return { ok: true, ready: true, media_attached_count: mediaResult.attachedCount };
   }
