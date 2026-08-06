@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Seeding Fsolution Bridge",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "description": "Ket noi Seeding Fsolution voi phien dang nhap Chrome that cho Facebook/TikTok.",
   "permissions": ["tabs", "scripting", "cookies", "storage"],
   "host_permissions": [
@@ -9,6 +9,8 @@
     "https://www.facebook.com/*",
     "https://*.facebook.com/*",
     "https://*.vercel.app/*",
+    "https://sale-fsolution.onrender.com/*",
+    "https://*.supabase.co/*",
     "http://localhost/*",
     "http://127.0.0.1/*"
   ],

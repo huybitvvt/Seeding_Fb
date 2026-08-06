@@ -91,6 +91,16 @@ function detectVideoMedia(url: string) {
     : { mediaUrl: cleanUrl, nativeVideoUrl: '' };
 }
 
+function directMediaItem(url: string): PostMediaItem | null {
+  const cleanUrl = url.trim();
+  if (!cleanUrl || !/\.(jpe?g|png|webp|gif|mp4|mov|m4v|webm)(\?|$)/i.test(cleanUrl)) return null;
+  return {
+    url: cleanUrl,
+    type: /\.(mp4|mov|m4v|webm)(\?|$)/i.test(cleanUrl) ? 'video' : 'image',
+    name: cleanUrl.split('?')[0].split('/').pop() || 'facebook-media',
+  };
+}
+
 function formatDateTime(value?: string) {
   if (!value) return '-';
   const parsed = new Date(value);
@@ -219,7 +229,12 @@ export function MarketingPipelinePanel({
       if (payload.status === 'opening') {
         setLocalStatus(`Đang mở ${groupName} (${Number(payload.currentNumber || completed + 1)}/${total})...`);
       } else if (payload.status === 'ready') {
-        setLocalStatus(`Đã điền caption tại ${groupName}. Kiểm tra, thêm media nếu có rồi tự bấm Đăng.`);
+        const attached = Number(payload.mediaAttachedCount || 0);
+        setLocalStatus(
+          attached
+            ? `Đã điền caption và chọn ${attached} media tại ${groupName}. Kiểm tra preview rồi tự bấm Đăng.`
+            : `Đã điền caption tại ${groupName}. Kiểm tra rồi tự bấm Đăng.`
+        );
       } else if (payload.status === 'submitting') {
         setLocalStatus(`Đang chờ Facebook xác nhận bài tại ${groupName}...`);
       } else if (payload.status === 'confirmed') {
@@ -403,7 +418,9 @@ export function MarketingPipelinePanel({
     assistedQueueRequestRef.current = requestId;
     setAssistedQueueBusy(true);
     setLocalStatus(`Đang gửi ${groupTargets.length} Group sang Chrome Extension...`);
-    const mediaCount = postMedia.length || (mediaUrl.trim() ? 1 : 0);
+    const directMedia = directMediaItem(mediaUrl);
+    const assistedMedia = postMedia.length ? postMedia : directMedia ? [directMedia] : [];
+    const linkPreviewUrl = !assistedMedia.length ? mediaUrl.trim() : '';
 
     const response = await new Promise<Record<string, any>>((resolve) => {
       const timer = window.setTimeout(() => {
@@ -429,8 +446,8 @@ export function MarketingPipelinePanel({
             taskId: `${requestId}_${index}`,
             id: target.id,
             name: target.name,
-            message: buildMessage(target),
-            mediaCount,
+            message: [buildMessage(target), linkPreviewUrl].filter(Boolean).join('\n\n'),
+            media: assistedMedia,
           })),
         },
       }, window.location.origin);

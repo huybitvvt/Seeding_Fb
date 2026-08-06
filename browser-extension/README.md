@@ -13,7 +13,7 @@ Extension này dùng để gửi bình luận TikTok, lấy cookie Facebook khi 
    - Vào `Lead` hoặc `TikTok CMT`, chọn video và bấm `Gửi CMT TikTok`.
    - Vào `Quản lý Cooki` -> thêm/sửa nhân sự -> bấm `Lấy từ Chrome` để lấy cookie Facebook.
    - Vào `TikTok CMT` -> `Một kênh`, dán `@username` hoặc link kênh. Extension sẽ mở kênh TikTok trong Chrome, cuộn trang để gom link video thật, rồi web mới đọc comment theo từng video.
-   - Vào `Bài viết`, chọn các Facebook Group rồi bấm `Đăng Group qua Chrome`. Extension mở từng Group và điền caption. Nhân viên kiểm tra, tự bấm `Đăng`; khi hộp soạn bài đóng, extension chuyển ngay sang Group kế tiếp.
+   - Vào `Bài viết`, chọn các Facebook Group rồi bấm `Đăng Group qua Chrome`. Extension mở từng Group, điền caption và tự chọn ảnh/video đã upload. Nhân viên kiểm tra preview, tự bấm `Đăng`; khi hộp soạn bài đóng, extension chuyển ngay sang Group kế tiếp.
 
 ## Cập nhật extension
 
@@ -21,7 +21,7 @@ Khi source có thay đổi extension:
 
 1. Mở `chrome://extensions`.
 2. Bấm nút reload trên `Seeding Fsolution Bridge` hoặc bấm `Update`.
-3. Đảm bảo version hiện tại là `0.1.18` trở lên.
+3. Đảm bảo version hiện tại là `0.1.19` trở lên.
 4. Tải lại web Seeding Fsolution trước khi test lại `TikTok CMT`.
 
 ## Lưu ý vận hành
@@ -32,6 +32,7 @@ Khi source có thay đổi extension:
 - Khi trả lời TikTok từ Inbox, extension sẽ ưu tiên mở link `?comment=<cid>`, sau đó tự cuộn panel bình luận để tìm comment, tô xanh nếu thấy và ghim bảng xử lý. Chỉ cuộn trong panel comment, không cuộn feed video.
 - Facebook cookie chỉ được lấy khi admin bấm nút, không tự động thu thập nền.
 - Chế độ Facebook Group không tự bấm nút `Đăng`. Nhân viên là người xác nhận hành động cuối; extension chỉ ghi nhận hộp soạn bài đã đóng rồi chuyển Group tiếp theo.
-- Caption được điền tự động. Nếu bài có ảnh/video, nhân viên thêm media trên Facebook trước khi bấm `Đăng`.
+- Caption và file ảnh/video công khai đã upload trên màn `Bài viết` được điền/chọn tự động. Extension sẽ dừng và báo lỗi nếu không tải hoặc gắn được media; nhân viên phải thấy preview rồi mới bấm `Đăng`.
+- Link YouTube/TikTok hoặc URL không trỏ trực tiếp tới file media được chèn vào caption để Facebook tạo link preview, không được tải thành file.
 - Nếu TikTok hỏi đăng nhập lại, hãy đăng nhập trực tiếp trên tab TikTok rồi bấm gửi lại.
 - Extension chỉ gửi khi người dùng bấm nút, không có chế độ tự spam hoặc chạy nền hàng loạt.

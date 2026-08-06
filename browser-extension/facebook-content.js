@@ -8,7 +8,7 @@
     groupId: '',
     groupName: '',
     message: '',
-    mediaCount: 0,
+    media: [],
     editor: null,
     dialog: null,
     postClickedAt: 0,
@@ -128,13 +128,152 @@
     return normalize(editor.innerText || editor.textContent).length > 0;
   }
 
+  function normalizeMedia(items) {
+    return (Array.isArray(items) ? items : [])
+      .slice(0, 10)
+      .map((item) => ({
+        url: String(item?.url || '').trim(),
+        type: item?.type === 'video' ? 'video' : 'image',
+        name: String(item?.name || '').trim(),
+      }))
+      .filter((item) => /^https?:\/\//i.test(item.url));
+  }
+
+  function mediaExtension(type, mimeType) {
+    const byMime = {
+      'image/jpeg': 'jpg',
+      'image/png': 'png',
+      'image/webp': 'webp',
+      'image/gif': 'gif',
+      'video/mp4': 'mp4',
+      'video/quicktime': 'mov',
+      'video/webm': 'webm',
+    };
+    return byMime[String(mimeType || '').toLowerCase()] || (type === 'video' ? 'mp4' : 'jpg');
+  }
+
+  function mediaFilename(item, index, mimeType) {
+    let filename = item.name;
+    if (!filename) {
+      try {
+        filename = decodeURIComponent(new URL(item.url).pathname.split('/').pop() || '');
+      } catch {
+        filename = '';
+      }
+    }
+    filename = filename.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim();
+    const extension = mediaExtension(item.type, mimeType);
+    if (!filename) filename = `facebook-media-${index + 1}.${extension}`;
+    if (!/\.[a-z0-9]{2,5}$/i.test(filename)) filename = `${filename}.${extension}`;
+    return filename;
+  }
+
+  async function downloadMediaFile(item, index) {
+    const response = await fetch(item.url, {
+      method: 'GET',
+      credentials: 'omit',
+      cache: 'no-store',
+    });
+    if (!response.ok) throw new Error(`không tải được ${item.name || `media ${index + 1}`} (HTTP ${response.status})`);
+    const blob = await response.blob();
+    if (!blob.size) throw new Error(`${item.name || `media ${index + 1}`} là file rỗng`);
+    const fallbackMime = item.type === 'video' ? 'video/mp4' : 'image/jpeg';
+    const mimeType = blob.type || fallbackMime;
+    if (!/^(image|video)\//i.test(mimeType)) {
+      throw new Error(`${item.name || `media ${index + 1}`} không phải file ảnh/video trực tiếp`);
+    }
+    return new File([blob], mediaFilename(item, index, mimeType), {
+      type: mimeType,
+      lastModified: Date.now(),
+    });
+  }
+
+  function findMediaInput(dialog) {
+    const roots = [dialog].filter(Boolean);
+    const candidates = [];
+    roots.forEach((root, rootIndex) => {
+      root.querySelectorAll('input[type="file"]').forEach((input) => {
+        if (candidates.some((item) => item.input === input)) return;
+        const accept = String(input.getAttribute('accept') || '').toLowerCase();
+        if (!accept.includes('image') && !accept.includes('video')) return;
+        let score = rootIndex === 0 ? 20 : 0;
+        if (accept.includes('image')) score += 8;
+        if (accept.includes('video')) score += 8;
+        if (input.multiple) score += 3;
+        candidates.push({ input, score });
+      });
+    });
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0]?.input || null;
+  }
+
+  function findMediaTrigger(dialog) {
+    if (!dialog) return null;
+    const phrases = ['ảnh/video', 'ảnh hoặc video', 'photo/video', 'photo or video', 'add photos', 'add photo'];
+    return Array.from(dialog.querySelectorAll('button, [role="button"], [aria-label]')).find((node) => {
+      if (!isVisible(node)) return false;
+      const text = normalize(`${node.getAttribute('aria-label') || ''} ${node.innerText || node.textContent || ''}`).toLowerCase();
+      return phrases.some((phrase) => text.includes(phrase));
+    }) || null;
+  }
+
+  async function waitForMediaInput(dialog) {
+    let input = findMediaInput(dialog);
+    if (input) return input;
+    const trigger = findMediaTrigger(dialog);
+    if (trigger) trigger.click();
+    for (let attempt = 0; attempt < 20 && !input; attempt += 1) {
+      await sleep(250);
+      input = findMediaInput(dialog);
+    }
+    return input;
+  }
+
+  async function attachMedia(dialog, items) {
+    if (!items.length) return { ok: true, attachedCount: 0 };
+    const input = await waitForMediaInput(dialog);
+    if (!input) return { ok: false, error: 'Không tìm thấy nút chọn ảnh/video trong hộp soạn bài Facebook.' };
+
+    const files = [];
+    for (let index = 0; index < items.length; index += 1) {
+      showStatus(`Đang tải media ${index + 1}/${items.length} cho ${state.groupName}...`);
+      try {
+        files.push(await downloadMediaFile(items[index], index));
+      } catch (error) {
+        return { ok: false, error: error?.message || String(error) };
+      }
+    }
+
+    const transfer = new DataTransfer();
+    files.forEach((file) => transfer.items.add(file));
+    try {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files')?.set;
+      if (setter) setter.call(input, transfer.files);
+      else input.files = transfer.files;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    } catch (error) {
+      return { ok: false, error: `Facebook không nhận danh sách media: ${error?.message || String(error)}` };
+    }
+
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      if (!dialog?.isConnected) return { ok: false, error: 'Hộp soạn bài Facebook đã đóng khi đang gắn media.' };
+      if (Number(input.files?.length || 0) >= files.length) {
+        await sleep(1500);
+        return { ok: true, attachedCount: files.length };
+      }
+      await sleep(250);
+    }
+    return { ok: false, error: 'Facebook chưa nhận file ảnh/video. Không tiếp tục để tránh đăng thiếu media.' };
+  }
+
   async function preparePost(payload) {
     state.requestId = String(payload.requestId || '');
     state.taskId = String(payload.taskId || '');
     state.groupId = String(payload.groupId || '');
     state.groupName = String(payload.groupName || payload.groupId || 'Facebook Group');
     state.message = String(payload.message || '').trim();
-    state.mediaCount = Number(payload.mediaCount || 0) || 0;
+    state.media = normalizeMedia(payload.media);
     state.postClickedAt = 0;
     if (state.completionTimer) clearInterval(state.completionTimer);
 
@@ -172,12 +311,20 @@
 
     state.editor = editor;
     state.dialog = dialog || editor.closest('[role="dialog"]');
-    const mediaHint = state.mediaCount
-      ? `\nBài có ${state.mediaCount} media: hãy thêm file thủ công trước khi đăng.`
+    const mediaResult = await attachMedia(state.dialog, state.media);
+    if (!mediaResult.ok) {
+      const error = `Không gắn được media: ${mediaResult.error}`;
+      showStatus(`${error}\nHàng đợi đã dừng để tránh đăng bài thiếu ảnh/video.`, 'error');
+      sendProgress('media_error', { error });
+      return { ok: false, final: true, error };
+    }
+
+    const mediaHint = mediaResult.attachedCount
+      ? ` và chọn ${mediaResult.attachedCount} media`
       : '';
-    showStatus(`Đã điền bài cho ${state.groupName}.${mediaHint}\nKiểm tra nội dung và tự bấm Đăng. Xong sẽ chuyển ngay sang Group tiếp theo.`);
-    sendProgress('ready', { mediaCount: state.mediaCount });
-    return { ok: true, ready: true, media_manual_required: state.mediaCount > 0 };
+    showStatus(`Đã điền caption${mediaHint} cho ${state.groupName}.\nKiểm tra preview và tự bấm Đăng. Xong sẽ chuyển ngay sang Group tiếp theo.`);
+    sendProgress('ready', { mediaAttachedCount: mediaResult.attachedCount });
+    return { ok: true, ready: true, media_attached_count: mediaResult.attachedCount };
   }
 
   function isPostButton(node) {

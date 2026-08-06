@@ -829,7 +829,7 @@ async function sendFacebookPrepareWithRetries(tabId, payload) {
       type: 'STREAL_FACEBOOK_PREPARE_GROUP_POST',
       payload,
     });
-    if (response?.ok) return response;
+    if (response?.ok || response?.final) return response;
     lastError = response?.error || lastError;
     await sleep(500);
   }
@@ -875,7 +875,7 @@ async function openCurrentFacebookQueueTask(queue) {
     groupId: task.id,
     groupName: task.name,
     message: task.message,
-    mediaCount: task.mediaCount || 0,
+    media: task.media || [],
   });
   if (!response?.ok) {
     queue.status = 'paused';
@@ -896,7 +896,7 @@ async function openCurrentFacebookQueueTask(queue) {
     groupId: task.id,
     groupName: task.name,
     currentNumber: queue.index + 1,
-    mediaManualRequired: Boolean(response.media_manual_required),
+    mediaAttachedCount: Math.max(0, Number(response.media_attached_count || 0) || 0),
   });
   return { ok: true, ready: true };
 }
@@ -904,13 +904,23 @@ async function openCurrentFacebookQueueTask(queue) {
 async function startFacebookGroupQueue(request, sender) {
   const payload = request.payload || {};
   const rawTasks = Array.isArray(payload.tasks) ? payload.tasks : [];
-  const tasks = rawTasks.slice(0, 50).map((task, index) => ({
-    taskId: String(task.taskId || `${request.requestId || Date.now()}_${index}`),
-    id: String(task.id || task.groupId || '').trim(),
-    name: String(task.name || task.groupName || task.id || '').trim(),
-    message: String(task.message || '').trim(),
-    mediaCount: Math.max(0, Number(task.mediaCount || 0) || 0),
-  })).filter((task) => task.id && task.message);
+  const tasks = rawTasks.slice(0, 50).map((task, index) => {
+    const media = (Array.isArray(task.media) ? task.media : [])
+      .slice(0, 10)
+      .map((item) => ({
+        url: String(item?.url || '').trim(),
+        type: item?.type === 'video' ? 'video' : 'image',
+        name: String(item?.name || '').trim(),
+      }))
+      .filter((item) => /^https?:\/\//i.test(item.url));
+    return {
+      taskId: String(task.taskId || `${request.requestId || Date.now()}_${index}`),
+      id: String(task.id || task.groupId || '').trim(),
+      name: String(task.name || task.groupName || task.id || '').trim(),
+      message: String(task.message || '').trim(),
+      media,
+    };
+  }).filter((task) => task.id && task.message);
   if (!tasks.length) return { ok: false, error: 'Chua co Group va noi dung hop le.' };
 
   const existing = await storageGet(FACEBOOK_QUEUE_STORAGE_KEY);
