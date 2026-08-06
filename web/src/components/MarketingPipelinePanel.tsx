@@ -926,13 +926,6 @@ export function MarketingPipelinePanel({
           </div>
 
           <div className="seeding-toolbar">
-            <button type="button" className="btn-submit" disabled={publishing} onClick={() => void publishNow()}>
-              {publishing
-                ? 'Đang xử lý...'
-                : selectedTargets.length > 1
-                  ? `📣 Đăng lần lượt ${PUBLISH_INTERVAL_MINUTES} phút`
-                  : '📣 Đăng ngay'}
-            </button>
             <button
               type="button"
               className="btn-cancel"
