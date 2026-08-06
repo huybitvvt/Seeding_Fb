@@ -1,6 +1,6 @@
 # Seeding Fsolution Bridge
 
-Extension này dùng để gửi bình luận TikTok và lấy cookie Facebook khi admin bấm nút trên web bằng chính phiên đăng nhập Chrome của khách. Web không tự đọc cookie nền; extension chỉ trả cookie khi người dùng chủ động bấm.
+Extension này dùng để gửi bình luận TikTok, lấy cookie Facebook khi admin bấm nút trên web và hỗ trợ đăng lần lượt vào Facebook Group bằng chính phiên Chrome của nhân viên. Web không tự đọc cookie nền; extension chỉ trả cookie khi người dùng chủ động bấm.
 
 ## Cài đặt cho khách
 
@@ -13,6 +13,7 @@ Extension này dùng để gửi bình luận TikTok và lấy cookie Facebook k
    - Vào `Lead` hoặc `TikTok CMT`, chọn video và bấm `Gửi CMT TikTok`.
    - Vào `Quản lý Cooki` -> thêm/sửa nhân sự -> bấm `Lấy từ Chrome` để lấy cookie Facebook.
    - Vào `TikTok CMT` -> `Một kênh`, dán `@username` hoặc link kênh. Extension sẽ mở kênh TikTok trong Chrome, cuộn trang để gom link video thật, rồi web mới đọc comment theo từng video.
+   - Vào `Bài viết`, chọn các Facebook Group rồi bấm `Đăng Group qua Chrome`. Extension mở từng Group và điền caption. Nhân viên kiểm tra, tự bấm `Đăng`; khi hộp soạn bài đóng, extension chuyển ngay sang Group kế tiếp.
 
 ## Cập nhật extension
 
@@ -20,7 +21,7 @@ Khi source có thay đổi extension:
 
 1. Mở `chrome://extensions`.
 2. Bấm nút reload trên `Seeding Fsolution Bridge` hoặc bấm `Update`.
-3. Đảm bảo version hiện tại là `0.1.17` trở lên.
+3. Đảm bảo version hiện tại là `0.1.18` trở lên.
 4. Tải lại web Seeding Fsolution trước khi test lại `TikTok CMT`.
 
 ## Lưu ý vận hành
@@ -30,5 +31,7 @@ Khi source có thay đổi extension:
 - Khi bấm gửi TikTok từ UI, web sẽ thử gửi trực tiếp qua extension bằng tab TikTok đang đăng nhập. Nếu TikTok chặn/captcha/không nhận, web sẽ fallback sang copy nội dung và mở video để sale gửi thủ công.
 - Khi trả lời TikTok từ Inbox, extension sẽ ưu tiên mở link `?comment=<cid>`, sau đó tự cuộn panel bình luận để tìm comment, tô xanh nếu thấy và ghim bảng xử lý. Chỉ cuộn trong panel comment, không cuộn feed video.
 - Facebook cookie chỉ được lấy khi admin bấm nút, không tự động thu thập nền.
+- Chế độ Facebook Group không tự bấm nút `Đăng`. Nhân viên là người xác nhận hành động cuối; extension chỉ ghi nhận hộp soạn bài đã đóng rồi chuyển Group tiếp theo.
+- Caption được điền tự động. Nếu bài có ảnh/video, nhân viên thêm media trên Facebook trước khi bấm `Đăng`.
 - Nếu TikTok hỏi đăng nhập lại, hãy đăng nhập trực tiếp trên tab TikTok rồi bấm gửi lại.
 - Extension chỉ gửi khi người dùng bấm nút, không có chế độ tự spam hoặc chạy nền hàng loạt.

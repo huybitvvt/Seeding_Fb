@@ -780,7 +780,214 @@ async function collectTikTokDomComments(request) {
   };
 }
 
+const FACEBOOK_QUEUE_STORAGE_KEY = 'streal_facebook_group_queue_v1';
+
+function storageGet(key) {
+  return new Promise((resolve) => chrome.storage.local.get([key], (value) => resolve(value?.[key] || null)));
+}
+
+function storageSet(key, value) {
+  return new Promise((resolve) => chrome.storage.local.set({ [key]: value }, resolve));
+}
+
+function storageRemove(key) {
+  return new Promise((resolve) => chrome.storage.local.remove([key], resolve));
+}
+
+function sendTabMessage(tabId, message) {
+  return new Promise((resolve) => {
+    if (!tabId) {
+      resolve({ ok: false, error: 'Thieu tab dich' });
+      return;
+    }
+    chrome.tabs.sendMessage(tabId, message, (response) => {
+      if (chrome.runtime.lastError) {
+        resolve({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      resolve(response || { ok: true });
+    });
+  });
+}
+
+async function notifyFacebookQueue(queue, status, extra = {}) {
+  if (!queue?.originTabId) return;
+  await sendTabMessage(queue.originTabId, {
+    type: 'STREAL_FACEBOOK_GROUP_QUEUE_PROGRESS',
+    requestId: queue.requestId,
+    status,
+    completedCount: queue.index || 0,
+    targetCount: queue.tasks?.length || 0,
+    ...extra,
+  });
+}
+
+async function sendFacebookPrepareWithRetries(tabId, payload) {
+  let lastError = '';
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const response = await sendTabMessage(tabId, {
+      type: 'STREAL_FACEBOOK_PREPARE_GROUP_POST',
+      payload,
+    });
+    if (response?.ok) return response;
+    lastError = response?.error || lastError;
+    await sleep(500);
+  }
+  return { ok: false, error: lastError || 'Extension chua ket noi duoc tab Facebook.' };
+}
+
+async function openCurrentFacebookQueueTask(queue) {
+  const task = queue?.tasks?.[queue.index];
+  if (!task) {
+    await notifyFacebookQueue(queue, 'done', { results: queue.results || [] });
+    if (queue?.originTabId) {
+      try { await chrome.tabs.update(queue.originTabId, { active: true }); } catch {}
+    }
+    await storageRemove(FACEBOOK_QUEUE_STORAGE_KEY);
+    return { ok: true, done: true };
+  }
+
+  const groupUrl = `https://www.facebook.com/groups/${encodeURIComponent(task.id)}`;
+  await notifyFacebookQueue(queue, 'opening', {
+    groupId: task.id,
+    groupName: task.name,
+    currentNumber: queue.index + 1,
+  });
+
+  let tab = null;
+  if (queue.facebookTabId) {
+    try {
+      tab = await chrome.tabs.update(queue.facebookTabId, { url: groupUrl, active: true });
+    } catch {
+      tab = null;
+    }
+  }
+  if (!tab) tab = await chrome.tabs.create({ url: groupUrl, active: true });
+  queue.facebookTabId = tab.id;
+  queue.status = 'opening';
+  await storageSet(FACEBOOK_QUEUE_STORAGE_KEY, queue);
+  await waitForTabLoaded(tab.id, 45000);
+  await sleep(1500);
+
+  const response = await sendFacebookPrepareWithRetries(tab.id, {
+    requestId: queue.requestId,
+    taskId: task.taskId,
+    groupId: task.id,
+    groupName: task.name,
+    message: task.message,
+    mediaCount: task.mediaCount || 0,
+  });
+  if (!response?.ok) {
+    queue.status = 'paused';
+    queue.error = response?.error || 'Khong dien duoc bai viet tren Facebook.';
+    await storageSet(FACEBOOK_QUEUE_STORAGE_KEY, queue);
+    await notifyFacebookQueue(queue, 'error', {
+      groupId: task.id,
+      groupName: task.name,
+      error: queue.error,
+    });
+    return { ok: false, error: queue.error };
+  }
+
+  queue.status = 'ready';
+  queue.error = '';
+  await storageSet(FACEBOOK_QUEUE_STORAGE_KEY, queue);
+  await notifyFacebookQueue(queue, 'ready', {
+    groupId: task.id,
+    groupName: task.name,
+    currentNumber: queue.index + 1,
+    mediaManualRequired: Boolean(response.media_manual_required),
+  });
+  return { ok: true, ready: true };
+}
+
+async function startFacebookGroupQueue(request, sender) {
+  const payload = request.payload || {};
+  const rawTasks = Array.isArray(payload.tasks) ? payload.tasks : [];
+  const tasks = rawTasks.slice(0, 50).map((task, index) => ({
+    taskId: String(task.taskId || `${request.requestId || Date.now()}_${index}`),
+    id: String(task.id || task.groupId || '').trim(),
+    name: String(task.name || task.groupName || task.id || '').trim(),
+    message: String(task.message || '').trim(),
+    mediaCount: Math.max(0, Number(task.mediaCount || 0) || 0),
+  })).filter((task) => task.id && task.message);
+  if (!tasks.length) return { ok: false, error: 'Chua co Group va noi dung hop le.' };
+
+  const existing = await storageGet(FACEBOOK_QUEUE_STORAGE_KEY);
+  if (existing?.tasks?.length && existing.index < existing.tasks.length) {
+    return { ok: false, error: 'Dang co mot hang doi Facebook Group chua hoan thanh.' };
+  }
+
+  const queue = {
+    requestId: String(request.requestId || `facebook_queue_${Date.now()}`),
+    originTabId: sender?.tab?.id || null,
+    facebookTabId: null,
+    index: 0,
+    status: 'queued',
+    tasks,
+    results: [],
+    createdAt: new Date().toISOString(),
+  };
+  await storageSet(FACEBOOK_QUEUE_STORAGE_KEY, queue);
+  openCurrentFacebookQueueTask(queue).catch(async (error) => {
+    queue.status = 'paused';
+    queue.error = error?.message || String(error);
+    await storageSet(FACEBOOK_QUEUE_STORAGE_KEY, queue);
+    await notifyFacebookQueue(queue, 'error', { error: queue.error });
+  });
+  return { ok: true, accepted: true, targetCount: tasks.length };
+}
+
+async function handleFacebookQueueEvent(message, sender) {
+  const queue = await storageGet(FACEBOOK_QUEUE_STORAGE_KEY);
+  if (!queue || queue.requestId !== message.requestId) return { ok: false, error: 'Khong tim thay hang doi Facebook.' };
+  const task = queue.tasks?.[queue.index];
+  if (!task || task.taskId !== message.taskId) return { ok: false, error: 'Bai dang hien tai khong khop hang doi.' };
+  if (queue.facebookTabId && sender?.tab?.id && queue.facebookTabId !== sender.tab.id) {
+    return { ok: false, error: 'Xac nhan den tu sai tab Facebook.' };
+  }
+
+  if (message.status !== 'confirmed') {
+    await notifyFacebookQueue(queue, message.status || 'progress', {
+      groupId: task.id,
+      groupName: task.name,
+      currentNumber: queue.index + 1,
+    });
+    return { ok: true };
+  }
+
+  queue.results = [...(queue.results || []), {
+    ok: true,
+    id: task.id,
+    name: task.name,
+    confirmedAt: message.confirmedAt || new Date().toISOString(),
+    method: 'user-confirmed-chrome',
+  }];
+  queue.index += 1;
+  queue.status = queue.index >= queue.tasks.length ? 'done' : 'advancing';
+  await storageSet(FACEBOOK_QUEUE_STORAGE_KEY, queue);
+  await notifyFacebookQueue(queue, 'confirmed', {
+    groupId: task.id,
+    groupName: task.name,
+    completedCount: queue.index,
+  });
+  await openCurrentFacebookQueueTask(queue);
+  return { ok: true, completedCount: queue.index, targetCount: queue.tasks.length };
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'STREAL_EXTENSION_START_FACEBOOK_GROUP_QUEUE') {
+    startFacebookGroupQueue(message, sender)
+      .then((response) => sendResponse(response))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+  if (message?.type === 'STREAL_FACEBOOK_GROUP_QUEUE_EVENT') {
+    handleFacebookQueueEvent(message, sender)
+      .then((response) => sendResponse(response))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
   if (message?.type === 'STREAL_EXTENSION_GET_FACEBOOK_COOKIE') {
     getFacebookCookies()
       .then((response) => sendResponse(response))

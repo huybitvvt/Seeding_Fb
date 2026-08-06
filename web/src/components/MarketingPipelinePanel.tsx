@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, AI_TIMEOUT_MS, PUBLISH_TIMEOUT_MS, UPLOAD_TIMEOUT_MS, formatFetchError } from '@/lib/api';
 import { APP_BRAND } from '@/lib/app-brand';
 import type { ContentPipelinePost, FbPage, GroupRow } from '@/lib/types';
@@ -180,8 +180,10 @@ export function MarketingPipelinePanel({
   const [localStatus, setLocalStatus] = useState('');
   const [loadingTargets, setLoadingTargets] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [assistedQueueBusy, setAssistedQueueBusy] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const assistedQueueRequestRef = useRef('');
 
   useEffect(() => {
     try {
@@ -203,6 +205,38 @@ export function MarketingPipelinePanel({
       // Local history is a convenience only; posting flow must not fail because storage is full.
     }
   }, [history]);
+
+  useEffect(() => {
+    const handleFacebookQueueProgress = (event: MessageEvent) => {
+      if (event.source !== window) return;
+      const payload = event.data || {};
+      if (payload.source !== 'streal-tiktok-extension') return;
+      if (payload.type !== 'STREAL_FACEBOOK_GROUP_QUEUE_PROGRESS') return;
+      if (payload.requestId !== assistedQueueRequestRef.current) return;
+      const completed = Number(payload.completedCount || 0);
+      const total = Number(payload.targetCount || 0);
+      const groupName = String(payload.groupName || payload.groupId || 'Group');
+      if (payload.status === 'opening') {
+        setLocalStatus(`Đang mở ${groupName} (${Number(payload.currentNumber || completed + 1)}/${total})...`);
+      } else if (payload.status === 'ready') {
+        setLocalStatus(`Đã điền caption tại ${groupName}. Kiểm tra, thêm media nếu có rồi tự bấm Đăng.`);
+      } else if (payload.status === 'submitting') {
+        setLocalStatus(`Đang chờ Facebook xác nhận bài tại ${groupName}...`);
+      } else if (payload.status === 'confirmed') {
+        setLocalStatus(`Đã ghi nhận ${completed}/${total}. Đang chuyển ngay sang Group tiếp theo...`);
+      } else if (payload.status === 'done') {
+        setAssistedQueueBusy(false);
+        setLocalStatus(`Hoàn tất đăng hỗ trợ ${total}/${total} Group.`);
+      } else if (payload.status === 'confirmation_timeout') {
+        setLocalStatus(`Facebook chưa xác nhận bài tại ${groupName}. Kiểm tra lỗi rồi bấm Đăng lại.`);
+      } else if (payload.status === 'error') {
+        setAssistedQueueBusy(false);
+        setLocalStatus(`Extension dừng tại ${groupName}: ${payload.error || 'không chuẩn bị được bài viết'}`);
+      }
+    };
+    window.addEventListener('message', handleFacebookQueueProgress);
+    return () => window.removeEventListener('message', handleFacebookQueueProgress);
+  }, []);
 
   const selectedTargets = useMemo<PublishTarget[]>(() => {
     const groupTargets = groups
@@ -357,6 +391,60 @@ export function MarketingPipelinePanel({
     } catch {
       setLocalStatus(`Đã mở ${target.name || target.id}, nhưng trình duyệt chặn sao chép. Hãy copy nội dung trong ô caption.`);
     }
+  }
+
+  async function startAssistedGroupQueue() {
+    const groupTargets = selectedTargets.filter((target) => target.type === 'group');
+    if (!groupTargets.length) {
+      setLocalStatus('Chọn ít nhất một Facebook Group để đăng qua Chrome.');
+      return;
+    }
+    const requestId = `facebook_group_queue_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    assistedQueueRequestRef.current = requestId;
+    setAssistedQueueBusy(true);
+    setLocalStatus(`Đang gửi ${groupTargets.length} Group sang Chrome Extension...`);
+    const mediaCount = postMedia.length || (mediaUrl.trim() ? 1 : 0);
+
+    const response = await new Promise<Record<string, any>>((resolve) => {
+      const timer = window.setTimeout(() => {
+        window.removeEventListener('message', handleResponse);
+        resolve({ ok: false, error: 'Không thấy extension phản hồi. Hãy cập nhật Seeding Fsolution Bridge lên 0.1.18 và tải lại trang.' });
+      }, 6000);
+      function handleResponse(event: MessageEvent) {
+        if (event.source !== window) return;
+        const payload = event.data || {};
+        if (payload.source !== 'streal-tiktok-extension') return;
+        if (payload.type !== 'STREAL_FACEBOOK_GROUP_QUEUE_RESPONSE' || payload.requestId !== requestId) return;
+        window.clearTimeout(timer);
+        window.removeEventListener('message', handleResponse);
+        resolve(payload);
+      }
+      window.addEventListener('message', handleResponse);
+      window.postMessage({
+        source: 'streal-web-page',
+        type: 'STREAL_FACEBOOK_GROUP_QUEUE_REQUEST',
+        requestId,
+        payload: {
+          tasks: groupTargets.map((target, index) => ({
+            taskId: `${requestId}_${index}`,
+            id: target.id,
+            name: target.name,
+            message: buildMessage(target),
+            mediaCount,
+          })),
+        },
+      }, window.location.origin);
+    });
+
+    if (!response.ok) {
+      setAssistedQueueBusy(false);
+      setLocalStatus(`Không khởi động được đăng Group qua Chrome: ${response.error || 'extension không phản hồi'}`);
+      return;
+    }
+    setLocalStatus(
+      `Đã giao ${response.targetCount || groupTargets.length} Group cho Chrome. `
+      + 'Mỗi lần anh tự bấm Đăng xong, extension sẽ chuyển ngay sang Group kế tiếp.'
+    );
   }
 
   function appendHistory(row: Omit<HistoryRow, 'id' | 'createdAt'>) {
@@ -714,6 +802,14 @@ export function MarketingPipelinePanel({
                   ? `📣 Đăng lần lượt ${PUBLISH_INTERVAL_MINUTES} phút`
                   : '📣 Đăng ngay'}
             </button>
+            <button
+              type="button"
+              className="btn-cancel"
+              disabled={assistedQueueBusy || !selectedTargets.some((target) => target.type === 'group')}
+              onClick={() => void startAssistedGroupQueue()}
+            >
+              {assistedQueueBusy ? 'Chrome đang xử lý...' : '🧭 Đăng Group qua Chrome'}
+            </button>
             <button type="button" className="btn-cancel" disabled={publishing} onClick={() => void scheduleDraft()}>
               ⏰ Đặt lịch
             </button>
@@ -817,6 +913,7 @@ export function MarketingPipelinePanel({
           <div className="target-note">
             File ảnh/video upload từ máy sẽ đăng dạng media thật; link YouTube/TikTok hoặc link dán tay sẽ đăng dạng link preview.
             Facebook Page vẫn hỗ trợ đăng qua API; Group có thể bị Meta từ chối do Groups API đã ngừng hỗ trợ.
+            Với <b>Đăng Group qua Chrome</b>, extension điền caption; nhân viên tự bấm Đăng và hệ thống chuyển ngay sang Group tiếp theo.
           </div>
         </aside>
       </div>
