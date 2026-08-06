@@ -847,8 +847,14 @@ async function openCurrentFacebookQueueTask(queue) {
     return { ok: true, done: true };
   }
 
-  const groupUrl = `https://www.facebook.com/groups/${encodeURIComponent(task.id)}`;
+  const targetType = task.type === 'page' ? 'page' : 'group';
+  const targetUrl = targetType === 'page'
+    ? `https://www.facebook.com/${encodeURIComponent(task.id)}`
+    : `https://www.facebook.com/groups/${encodeURIComponent(task.id)}`;
   await notifyFacebookQueue(queue, 'opening', {
+    targetType,
+    targetId: task.id,
+    targetName: task.name,
     groupId: task.id,
     groupName: task.name,
     currentNumber: queue.index + 1,
@@ -857,12 +863,12 @@ async function openCurrentFacebookQueueTask(queue) {
   let tab = null;
   if (queue.facebookTabId) {
     try {
-      tab = await chrome.tabs.update(queue.facebookTabId, { url: groupUrl, active: true });
+      tab = await chrome.tabs.update(queue.facebookTabId, { url: targetUrl, active: true });
     } catch {
       tab = null;
     }
   }
-  if (!tab) tab = await chrome.tabs.create({ url: groupUrl, active: true });
+  if (!tab) tab = await chrome.tabs.create({ url: targetUrl, active: true });
   queue.facebookTabId = tab.id;
   queue.status = 'opening';
   await storageSet(FACEBOOK_QUEUE_STORAGE_KEY, queue);
@@ -872,6 +878,9 @@ async function openCurrentFacebookQueueTask(queue) {
   const response = await sendFacebookPrepareWithRetries(tab.id, {
     requestId: queue.requestId,
     taskId: task.taskId,
+    targetType,
+    targetId: task.id,
+    targetName: task.name,
     groupId: task.id,
     groupName: task.name,
     message: task.message,
@@ -882,6 +891,9 @@ async function openCurrentFacebookQueueTask(queue) {
     queue.error = response?.error || 'Khong dien duoc bai viet tren Facebook.';
     await storageSet(FACEBOOK_QUEUE_STORAGE_KEY, queue);
     await notifyFacebookQueue(queue, 'error', {
+      targetType,
+      targetId: task.id,
+      targetName: task.name,
       groupId: task.id,
       groupName: task.name,
       error: queue.error,
@@ -893,6 +905,9 @@ async function openCurrentFacebookQueueTask(queue) {
   queue.error = '';
   await storageSet(FACEBOOK_QUEUE_STORAGE_KEY, queue);
   await notifyFacebookQueue(queue, 'ready', {
+    targetType,
+    targetId: task.id,
+    targetName: task.name,
     groupId: task.id,
     groupName: task.name,
     currentNumber: queue.index + 1,
@@ -915,20 +930,21 @@ async function startFacebookGroupQueue(request, sender) {
       .filter((item) => /^https?:\/\//i.test(item.url));
     return {
       taskId: String(task.taskId || `${request.requestId || Date.now()}_${index}`),
+      type: task.type === 'page' ? 'page' : 'group',
       id: String(task.id || task.groupId || '').trim(),
       name: String(task.name || task.groupName || task.id || '').trim(),
       message: String(task.message || '').trim(),
       media,
     };
   }).filter((task) => task.id && task.message);
-  if (!tasks.length) return { ok: false, error: 'Chua co Group va noi dung hop le.' };
+  if (!tasks.length) return { ok: false, error: 'Chua co Facebook Group/Page va noi dung hop le.' };
 
   const existing = await storageGet(FACEBOOK_QUEUE_STORAGE_KEY);
   const existingIsActive = existing?.tasks?.length
     && existing.index < existing.tasks.length
     && !['paused', 'done'].includes(existing.status);
   if (existingIsActive) {
-    return { ok: false, error: 'Dang co mot hang doi Facebook Group chua hoan thanh.' };
+    return { ok: false, error: 'Dang co mot hang doi Facebook chua hoan thanh.' };
   }
 
   const queue = {
@@ -962,27 +978,37 @@ async function handleFacebookQueueEvent(message, sender) {
 
   if (message.status !== 'confirmed') {
     await notifyFacebookQueue(queue, message.status || 'progress', {
+      targetType: task.type,
+      targetId: task.id,
+      targetName: task.name,
       groupId: task.id,
       groupName: task.name,
       currentNumber: queue.index + 1,
+      error: message.error || '',
     });
     return { ok: true };
   }
 
   queue.results = [...(queue.results || []), {
     ok: true,
+    type: task.type,
     id: task.id,
     name: task.name,
     confirmedAt: message.confirmedAt || new Date().toISOString(),
+    delivery: ['published', 'pending_review'].includes(message.outcome) ? message.outcome : 'submitted',
     method: 'user-confirmed-chrome',
   }];
   queue.index += 1;
   queue.status = queue.index >= queue.tasks.length ? 'done' : 'advancing';
   await storageSet(FACEBOOK_QUEUE_STORAGE_KEY, queue);
   await notifyFacebookQueue(queue, 'confirmed', {
+    targetType: task.type,
+    targetId: task.id,
+    targetName: task.name,
     groupId: task.id,
     groupName: task.name,
     completedCount: queue.index,
+    outcome: ['published', 'pending_review'].includes(message.outcome) ? message.outcome : 'submitted',
   });
   await openCurrentFacebookQueueTask(queue);
   return { ok: true, completedCount: queue.index, targetCount: queue.tasks.length };

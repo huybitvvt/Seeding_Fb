@@ -126,6 +126,26 @@ function displayPostStatus(status: string) {
   return status || '-';
 }
 
+function deliveryLabel(result?: PublishResult) {
+  if (!result) return 'Đang chờ';
+  if (!result.ok) return `Lỗi: ${result.error || 'không xác định'}`;
+  if (result.delivery === 'pending_review') return 'Chờ Facebook kiểm duyệt';
+  if (result.delivery === 'published') return 'Facebook báo đã đăng';
+  if (result.delivery === 'submitted') return 'Đã gửi, chưa xác định kiểm duyệt';
+  if (result.delivery === 'submitting') return 'Đang gửi lên Facebook';
+  if (result.delivery === 'awaiting_user') return 'Chờ nhân viên bấm Đăng';
+  if (result.delivery === 'opening') return 'Đang mở Facebook';
+  if (result.post_id) return 'Đã đăng';
+  return result.delivery || 'Đã xử lý';
+}
+
+function historyPillClass(status: string) {
+  const value = status.toLowerCase();
+  if (value.includes('lỗi') || value.includes('failed') || value.includes('chưa xác nhận')) return 'pill-danger';
+  if (value.includes('đang') || value.includes('chờ') || value.includes('khởi tạo')) return 'pill-pending';
+  return 'pill-ok';
+}
+
 async function readPayload(res: Response) {
   try {
     return await res.json();
@@ -225,28 +245,75 @@ export function MarketingPipelinePanel({
       if (payload.requestId !== assistedQueueRequestRef.current) return;
       const completed = Number(payload.completedCount || 0);
       const total = Number(payload.targetCount || 0);
-      const groupName = String(payload.groupName || payload.groupId || 'Group');
+      const targetType: PublishTarget['type'] = payload.targetType === 'page' ? 'page' : 'group';
+      const targetId = String(payload.targetId || payload.groupId || '');
+      const targetName = String(payload.targetName || payload.groupName || targetId || 'Facebook');
+      const target: PublishTarget = { type: targetType, id: targetId, name: targetName };
+      const historyId = `chrome-${payload.requestId}`;
+      const updateHistory = (nextStatus: string, result?: PublishResult, finalResults?: PublishResult[]) => {
+        setHistory((prev) => prev.map((row) => {
+          if (row.id !== historyId) return row;
+          let results = finalResults || row.results || [];
+          if (result?.target.id) {
+            results = [...results.filter((item) => targetKey(item.target) !== targetKey(result.target)), result];
+          }
+          return { ...row, status: nextStatus, results };
+        }));
+      };
       if (payload.status === 'opening') {
-        setLocalStatus(`Đang mở ${groupName} (${Number(payload.currentNumber || completed + 1)}/${total})...`);
+        updateHistory(`Đang chuẩn bị ${Number(payload.currentNumber || completed + 1)}/${total}`, {
+          ok: true, target, delivery: 'opening',
+        });
+        setLocalStatus(`Đang mở ${targetName} (${Number(payload.currentNumber || completed + 1)}/${total})...`);
       } else if (payload.status === 'ready') {
         const attached = Number(payload.mediaAttachedCount || 0);
+        updateHistory(`Chờ bấm Đăng ${Number(payload.currentNumber || completed + 1)}/${total}`, {
+          ok: true, target, delivery: 'awaiting_user',
+        });
         setLocalStatus(
           attached
-            ? `Đã điền caption và chọn ${attached} media tại ${groupName}. Kiểm tra preview rồi tự bấm Đăng.`
-            : `Đã điền caption tại ${groupName}. Kiểm tra rồi tự bấm Đăng.`
+            ? `Đã điền caption và chọn ${attached} media tại ${targetName}. Kiểm tra preview rồi tự bấm Đăng.`
+            : `Đã điền caption tại ${targetName}. Kiểm tra rồi tự bấm Đăng.`
         );
       } else if (payload.status === 'submitting') {
-        setLocalStatus(`Đang chờ Facebook xác nhận bài tại ${groupName}...`);
+        updateHistory(`Đang gửi ${completed + 1}/${total}`, {
+          ok: true, target, delivery: 'submitting',
+        });
+        setLocalStatus(`Đang chờ Facebook xác nhận bài tại ${targetName}...`);
       } else if (payload.status === 'confirmed') {
-        setLocalStatus(`Đã ghi nhận ${completed}/${total}. Đang chuyển ngay sang Group tiếp theo...`);
+        const outcome = ['published', 'pending_review'].includes(payload.outcome) ? payload.outcome : 'submitted';
+        updateHistory(`Đã gửi ${completed}/${total}`, {
+          ok: true, target, delivery: outcome,
+        });
+        const outcomeText = outcome === 'pending_review'
+          ? 'đang chờ kiểm duyệt'
+          : outcome === 'published' ? 'đã đăng' : 'đã gửi thao tác đăng';
+        setLocalStatus(`Đã ghi nhận ${targetName}: ${outcomeText} (${completed}/${total}). Đang chuyển nơi tiếp theo...`);
       } else if (payload.status === 'done') {
+        const finalResults: PublishResult[] = safeList<any>(payload.results).map((item) => ({
+          ok: item.ok !== false,
+          target: {
+            type: item.type === 'page' ? 'page' : 'group',
+            id: String(item.id || ''),
+            name: String(item.name || item.id || ''),
+          },
+          delivery: String(item.delivery || 'submitted'),
+          error: item.error ? String(item.error) : undefined,
+        }));
+        updateHistory(`Hoàn tất ${completed}/${total} · kiểm tra trạng thái từng nơi`, undefined, finalResults);
         setAssistedQueueBusy(false);
-        setLocalStatus(`Hoàn tất đăng hỗ trợ ${total}/${total} Group.`);
+        setLocalStatus(`Hoàn tất đăng hỗ trợ ${completed}/${total} nơi. Xem trạng thái chi tiết trong lịch sử.`);
       } else if (payload.status === 'confirmation_timeout') {
-        setLocalStatus(`Facebook chưa xác nhận bài tại ${groupName}. Kiểm tra lỗi rồi bấm Đăng lại.`);
+        updateHistory(`Chưa xác nhận tại ${targetName}`, {
+          ok: false, target, delivery: 'confirmation_timeout', error: 'Facebook chưa đóng hộp soạn bài sau 45 giây.',
+        });
+        setLocalStatus(`Facebook chưa xác nhận bài tại ${targetName}. Kiểm tra lỗi rồi bấm Đăng lại.`);
       } else if (payload.status === 'error') {
+        updateHistory(`Lỗi tại ${targetName}`, {
+          ok: false, target, delivery: 'failed', error: String(payload.error || 'không chuẩn bị được bài viết'),
+        });
         setAssistedQueueBusy(false);
-        setLocalStatus(`Extension dừng tại ${groupName}: ${payload.error || 'không chuẩn bị được bài viết'}`);
+        setLocalStatus(`Extension dừng tại ${targetName}: ${payload.error || 'không chuẩn bị được bài viết'}`);
       }
     };
     window.addEventListener('message', handleFacebookQueueProgress);
@@ -294,7 +361,7 @@ export function MarketingPipelinePanel({
     const importedKeys = new Set(importedHistory.map(historyFingerprint));
     const seen = new Set<string>();
     return [...importedHistory, ...history].filter((row) => {
-      if (row.status === 'Đã lưu lịch' && importedKeys.has(historyFingerprint(row))) return false;
+      if (row.id.startsWith('local-') && importedKeys.has(historyFingerprint(row))) return false;
       if (seen.has(row.id)) return false;
       seen.add(row.id);
       return true;
@@ -409,23 +476,37 @@ export function MarketingPipelinePanel({
   }
 
   async function startAssistedGroupQueue() {
-    const groupTargets = selectedTargets.filter((target) => target.type === 'group');
-    if (!groupTargets.length) {
-      setLocalStatus('Chọn ít nhất một Facebook Group để đăng qua Chrome.');
+    const assistedTargets = selectedTargets;
+    if (!assistedTargets.length) {
+      setLocalStatus('Chọn ít nhất một Facebook Group hoặc Page để đăng qua Chrome.');
       return;
     }
-    const requestId = `facebook_group_queue_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const requestId = `facebook_queue_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     assistedQueueRequestRef.current = requestId;
     setAssistedQueueBusy(true);
-    setLocalStatus(`Đang gửi ${groupTargets.length} Group sang Chrome Extension...`);
+    setLocalStatus(`Đang gửi ${assistedTargets.length} nơi sang Chrome Extension...`);
     const directMedia = directMediaItem(mediaUrl);
     const assistedMedia = postMedia.length ? postMedia : directMedia ? [directMedia] : [];
     const linkPreviewUrl = !assistedMedia.length ? mediaUrl.trim() : '';
+    const historyId = `chrome-${requestId}`;
+    setHistory((prev) => [{
+      id: historyId,
+      title,
+      content,
+      mediaUrl,
+      mediaUrls: assistedMedia.map((item) => item.url),
+      hashtags,
+      scheduledAt: '',
+      targets: assistedTargets,
+      status: 'Đang khởi tạo qua Chrome',
+      results: [],
+      createdAt: new Date().toISOString(),
+    }, ...prev.filter((row) => row.id !== historyId)].slice(0, 80));
 
     const response = await new Promise<Record<string, any>>((resolve) => {
       const timer = window.setTimeout(() => {
         window.removeEventListener('message', handleResponse);
-        resolve({ ok: false, error: 'Không thấy extension phản hồi. Hãy cập nhật Seeding Fsolution Bridge lên 0.1.18 và tải lại trang.' });
+        resolve({ ok: false, error: 'Không thấy extension phản hồi. Hãy cập nhật Seeding Fsolution Bridge lên 0.1.23 và tải lại trang.' });
       }, 6000);
       function handleResponse(event: MessageEvent) {
         if (event.source !== window) return;
@@ -442,8 +523,9 @@ export function MarketingPipelinePanel({
         type: 'STREAL_FACEBOOK_GROUP_QUEUE_REQUEST',
         requestId,
         payload: {
-          tasks: groupTargets.map((target, index) => ({
+          tasks: assistedTargets.map((target, index) => ({
             taskId: `${requestId}_${index}`,
+            type: target.type,
             id: target.id,
             name: target.name,
             message: [buildMessage(target), linkPreviewUrl].filter(Boolean).join('\n\n'),
@@ -454,13 +536,16 @@ export function MarketingPipelinePanel({
     });
 
     if (!response.ok) {
+      setHistory((prev) => prev.map((row) => row.id === historyId
+        ? { ...row, status: `Lỗi khởi động: ${response.error || 'extension không phản hồi'}` }
+        : row));
       setAssistedQueueBusy(false);
-      setLocalStatus(`Không khởi động được đăng Group qua Chrome: ${response.error || 'extension không phản hồi'}`);
+      setLocalStatus(`Không khởi động được đăng qua Chrome: ${response.error || 'extension không phản hồi'}`);
       return;
     }
     setLocalStatus(
-      `Đã giao ${response.targetCount || groupTargets.length} Group cho Chrome. `
-      + 'Mỗi lần anh tự bấm Đăng xong, extension sẽ chuyển ngay sang Group kế tiếp.'
+      `Đã giao ${response.targetCount || assistedTargets.length} nơi cho Chrome. `
+      + 'Mỗi lần anh tự bấm Đăng xong, extension sẽ ghi trạng thái và chuyển ngay sang nơi kế tiếp.'
     );
   }
 
@@ -553,6 +638,17 @@ export function MarketingPipelinePanel({
       const payload = await readPayload(res);
 
       if (payload.queued) {
+        appendHistory({
+          title,
+          content,
+          mediaUrl,
+          mediaUrls,
+          hashtags,
+          scheduledAt: '',
+          targets: selectedTargets,
+          status: `Đang chờ 0/${payload.target_count || selectedTargets.length} · ${payload.interval_minutes || PUBLISH_INTERVAL_MINUTES} phút/lượt`,
+          results: [],
+        });
         setLocalStatus(
           `Đã xếp hàng ${payload.target_count || selectedTargets.length} nơi. `
           + `Lượt đầu chạy trong khoảng 30 giây, các lượt sau cách nhau ${payload.interval_minutes || PUBLISH_INTERVAL_MINUTES} phút.`
@@ -586,10 +682,28 @@ export function MarketingPipelinePanel({
             : `Đã đăng ${okCount}/${results.length} nơi.`
         );
       } else {
-        setLocalStatus(payload.error || 'Lỗi không xác định từ server.');
+        const error = payload.error || 'Lỗi không xác định từ server.';
+        appendHistory({
+          title, content, mediaUrl, mediaUrls, hashtags, scheduledAt: '', targets: selectedTargets,
+          status: `Lỗi: ${error}`,
+          results: selectedTargets.map((target) => ({ ok: false, target, error })),
+        });
+        setLocalStatus(error);
       }
     } catch (err: unknown) {
-      setLocalStatus(`Lỗi kết nối: ${formatFetchError(err)}`);
+      const error = `Lỗi kết nối: ${formatFetchError(err)}`;
+      appendHistory({
+        title,
+        content,
+        mediaUrl,
+        mediaUrls: postMedia.map((item) => item.url).filter(Boolean),
+        hashtags,
+        scheduledAt: '',
+        targets: selectedTargets,
+        status: error,
+        results: selectedTargets.map((target) => ({ ok: false, target, error })),
+      });
+      setLocalStatus(error);
     } finally {
       setPublishing(false);
       void onReload();
@@ -822,10 +936,10 @@ export function MarketingPipelinePanel({
             <button
               type="button"
               className="btn-cancel"
-              disabled={assistedQueueBusy || !selectedTargets.some((target) => target.type === 'group')}
+              disabled={assistedQueueBusy || !selectedTargets.length}
               onClick={() => void startAssistedGroupQueue()}
             >
-              {assistedQueueBusy ? 'Chrome đang xử lý...' : '🧭 Đăng Group qua Chrome'}
+              {assistedQueueBusy ? 'Chrome đang xử lý...' : '🧭 Đăng qua Chrome'}
             </button>
             <button type="button" className="btn-cancel" disabled={publishing} onClick={() => void scheduleDraft()}>
               ⏰ Đặt lịch
@@ -930,7 +1044,7 @@ export function MarketingPipelinePanel({
           <div className="target-note">
             File ảnh/video upload từ máy sẽ đăng dạng media thật; link YouTube/TikTok hoặc link dán tay sẽ đăng dạng link preview.
             Facebook Page vẫn hỗ trợ đăng qua API; Group có thể bị Meta từ chối do Groups API đã ngừng hỗ trợ.
-            Với <b>Đăng Group qua Chrome</b>, extension điền caption; nhân viên tự bấm Đăng và hệ thống chuyển ngay sang Group tiếp theo.
+            Với <b>Đăng qua Chrome</b>, extension xử lý lần lượt cả Group và Page, ghi trạng thái từng nơi; nhân viên tự bấm Đăng rồi hệ thống chuyển ngay sang nơi tiếp theo.
           </div>
         </aside>
       </div>
@@ -965,12 +1079,15 @@ export function MarketingPipelinePanel({
                   <td>{formatDateTime(row.scheduledAt)}</td>
                   <td>{row.targets.length ? row.targets.map((target) => target.name).join(', ') : '-'}</td>
                   <td>
-                    <span className={row.status.toLowerCase().includes('lỗi') || row.status.toLowerCase().includes('failed') ? 'pill-danger' : 'pill-ok'}>
+                    <span className={historyPillClass(row.status)}>
                       {displayPostStatus(row.status)}
                     </span>
-                    {row.results?.some((item) => !item.ok) ? (
+                    {row.targets.length ? (
                       <small className="publish-error-detail">
-                        {row.results.filter((item) => !item.ok).map((item) => `${item.target.name}: ${item.error || 'lỗi'}`).join(' · ')}
+                        {row.targets.map((target) => {
+                          const result = row.results?.find((item) => targetKey(item.target) === targetKey(target));
+                          return `${target.name}: ${deliveryLabel(result)}`;
+                        }).join(' · ')}
                       </small>
                     ) : null}
                   </td>

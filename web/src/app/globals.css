@@ -3110,7 +3110,8 @@ button, input, select, textarea { font-family: inherit; }
   font-weight: 600;
 }
 .pill-ok,
-.pill-danger {
+.pill-danger,
+.pill-pending {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
@@ -3121,6 +3122,7 @@ button, input, select, textarea { font-family: inherit; }
 }
 .pill-ok { background: #dcfce7; color: #047857; }
 .pill-danger { background: #ffe4e6; color: #be123c; }
+.pill-pending { background: #fef3c7; color: #a16207; }
 .seeding-status-line {
   min-height: 22px;
   color: #475569;

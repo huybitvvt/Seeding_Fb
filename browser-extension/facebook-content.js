@@ -5,6 +5,7 @@
   const state = {
     requestId: '',
     taskId: '',
+    targetType: 'group',
     groupId: '',
     groupName: '',
     message: '',
@@ -54,6 +55,9 @@
       type: 'STREAL_FACEBOOK_GROUP_QUEUE_EVENT',
       requestId: state.requestId,
       taskId: state.taskId,
+      targetType: state.targetType,
+      targetId: state.groupId,
+      targetName: state.groupName,
       groupId: state.groupId,
       groupName: state.groupName,
       status,
@@ -288,8 +292,9 @@
   async function preparePost(payload) {
     state.requestId = String(payload.requestId || '');
     state.taskId = String(payload.taskId || '');
-    state.groupId = String(payload.groupId || '');
-    state.groupName = String(payload.groupName || payload.groupId || 'Facebook Group');
+    state.targetType = payload.targetType === 'page' ? 'page' : 'group';
+    state.groupId = String(payload.targetId || payload.groupId || '');
+    state.groupName = String(payload.targetName || payload.groupName || state.groupId || 'Facebook');
     state.message = String(payload.message || '').trim();
     state.media = normalizeMedia(payload.media);
     state.postClickedAt = 0;
@@ -303,7 +308,9 @@
     if (!editor) {
       const trigger = findComposerTrigger();
       if (!trigger) {
-        const error = 'Không tìm thấy ô tạo bài viết. Hãy kiểm tra đã tham gia Group và tải lại trang.';
+        const error = state.targetType === 'page'
+          ? 'Không tìm thấy ô tạo bài viết trên Page. Hãy kiểm tra quyền quản trị/chế độ dùng Facebook với tư cách Page.'
+          : 'Không tìm thấy ô tạo bài viết. Hãy kiểm tra đã tham gia Group và tải lại trang.';
         showStatus(error, 'error');
         return { ok: false, error };
       }
@@ -358,6 +365,31 @@
     return Boolean(dialog && state.editor && dialog.contains(state.editor));
   }
 
+  function detectPostOutcome() {
+    const noticeText = Array.from(document.querySelectorAll('[role="alert"], [role="status"]'))
+      .filter(isVisible)
+      .map((node) => normalize(node.innerText || node.textContent || '').toLowerCase())
+      .join(' ');
+    const pendingPhrases = [
+      'chờ phê duyệt',
+      'chờ kiểm duyệt',
+      'chờ quản trị viên',
+      'pending approval',
+      'submitted for approval',
+      'waiting for approval',
+    ];
+    if (pendingPhrases.some((phrase) => noticeText.includes(phrase))) return 'pending_review';
+    const publishedPhrases = [
+      'đã đăng',
+      'đã chia sẻ',
+      'post published',
+      'post was published',
+      'successfully posted',
+    ];
+    if (publishedPhrases.some((phrase) => noticeText.includes(phrase))) return 'published';
+    return 'submitted';
+  }
+
   function watchForCompletion() {
     if (state.completionTimer) clearInterval(state.completionTimer);
     state.completionTimer = setInterval(() => {
@@ -366,8 +398,14 @@
       if (dialogGone) {
         clearInterval(state.completionTimer);
         state.completionTimer = null;
-        showStatus(`Đã ghi nhận đăng xong ${state.groupName}. Đang chuyển Group tiếp theo...`, 'success');
-        sendProgress('confirmed', { confirmedAt: new Date().toISOString() });
+        setTimeout(() => {
+          const outcome = detectPostOutcome();
+          const outcomeText = outcome === 'pending_review'
+            ? 'Facebook báo đang chờ kiểm duyệt'
+            : outcome === 'published' ? 'Facebook báo đã đăng' : 'đã gửi thao tác đăng';
+          showStatus(`Đã ghi nhận ${state.groupName}: ${outcomeText}. Đang chuyển nơi tiếp theo...`, 'success');
+          sendProgress('confirmed', { confirmedAt: new Date().toISOString(), outcome });
+        }, 800);
         return;
       }
       if (Date.now() - state.postClickedAt > 45000) {
