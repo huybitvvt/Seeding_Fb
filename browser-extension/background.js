@@ -924,7 +924,10 @@ async function startFacebookGroupQueue(request, sender) {
   if (!tasks.length) return { ok: false, error: 'Chua co Group va noi dung hop le.' };
 
   const existing = await storageGet(FACEBOOK_QUEUE_STORAGE_KEY);
-  if (existing?.tasks?.length && existing.index < existing.tasks.length) {
+  const existingIsActive = existing?.tasks?.length
+    && existing.index < existing.tasks.length
+    && !['paused', 'done'].includes(existing.status);
+  if (existingIsActive) {
     return { ok: false, error: 'Dang co mot hang doi Facebook Group chua hoan thanh.' };
   }
 
