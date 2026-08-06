@@ -105,20 +105,32 @@
     selection.removeAllRanges();
     selection.addRange(range);
     try {
-      document.execCommand('insertText', false, message);
+      document.execCommand('delete', false);
+      const lines = message.replace(/\r\n?/g, '\n').split('\n');
+      lines.forEach((line, index) => {
+        if (line) document.execCommand('insertText', false, line);
+        if (index < lines.length - 1) document.execCommand('insertParagraph', false);
+      });
     } catch {
       // Fall through to the DOM-based fallback below.
     }
-    if (normalize(editor.innerText || editor.textContent) !== normalize(message)) {
-      editor.replaceChildren(document.createTextNode(message));
+    if (!normalize(editor.innerText || editor.textContent)) {
+      const fragment = document.createDocumentFragment();
+      message.replace(/\r\n?/g, '\n').split('\n').forEach((line) => {
+        const row = document.createElement('div');
+        if (line) row.textContent = line;
+        else row.appendChild(document.createElement('br'));
+        fragment.appendChild(row);
+      });
+      editor.replaceChildren(fragment);
       editor.dispatchEvent(new InputEvent('input', {
         bubbles: true,
-        inputType: 'insertText',
+        inputType: 'insertFromPaste',
         data: null,
       }));
     }
     editor.dispatchEvent(new Event('change', { bubbles: true }));
-    return normalize(editor.innerText || editor.textContent) === normalize(message);
+    return normalize(editor.innerText || editor.textContent).length > 0;
   }
 
   function normalizeMedia(items) {
