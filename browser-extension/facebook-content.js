@@ -511,14 +511,26 @@
     return { ok: true, ready: true, media_attached_count: mediaResult.attachedCount };
   }
 
-  function isPostButton(node) {
-    const button = node instanceof Element ? node.closest('button, [role="button"]') : null;
-    if (!button || !isVisible(button)) return false;
+  function resolvePostButton(node) {
+    const element = node instanceof Element ? node : node?.parentElement;
+    const button = element?.closest?.('button, [role="button"]') || null;
+    if (!button || !isVisible(button)) return null;
+    if (button.matches(':disabled, [aria-disabled="true"]')) return null;
     const label = normalize(button.getAttribute('aria-label') || '').toLowerCase();
     const text = normalize(button.innerText || button.textContent || '').toLowerCase();
-    if (![label, text].some((value) => ['đăng', 'post', 'publish'].includes(value))) return false;
-    const dialog = button.closest('[role="dialog"]');
-    return Boolean(dialog && state.editor && dialog.contains(state.editor));
+    const postLabels = ['đăng', 'đăng bài viết', 'post', 'publish'];
+    if (![label, text].some((value) => postLabels.includes(value))) return null;
+
+    // Facebook can replace the Lexical editor node after a synthetic paste. Do
+    // not require the cached editor element to still be inside the dialog when
+    // the user clicks Post. Validate the current composer dialog instead.
+    const buttonDialog = button.closest('[role="dialog"]');
+    const storedDialogMatches = state.dialog?.isConnected
+      && isVisible(state.dialog)
+      && state.dialog.contains(button);
+    const currentDialogMatches = buttonDialog && composerDialogScore(buttonDialog) >= 100;
+    if (!storedDialogMatches && !currentDialogMatches) return null;
+    return { button, dialog: buttonDialog || state.dialog };
   }
 
   function detectPostOutcome() {
@@ -574,13 +586,21 @@
     }, 500);
   }
 
-  document.addEventListener('click', (event) => {
-    if (!state.requestId || !state.editor || !isPostButton(event.target)) return;
+  function handlePostIntent(event) {
+    if (!state.requestId || !state.preparedKey || state.postClickedAt) return;
+    const match = resolvePostButton(event.target);
+    if (!match) return;
+    // Capture pointerdown as well as click because Facebook may replace/remove
+    // the composer during its own click handler before a later listener runs.
+    state.dialog = match.dialog;
     state.postClickedAt = Date.now();
     showStatus(`Đang chờ Facebook xác nhận bài tại ${state.groupName}...`);
     sendProgress('submitting');
     watchForCompletion();
-  }, true);
+  }
+
+  document.addEventListener('pointerdown', handlePostIntent, true);
+  document.addEventListener('click', handlePostIntent, true);
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type !== 'STREAL_FACEBOOK_PREPARE_GROUP_POST') return false;
