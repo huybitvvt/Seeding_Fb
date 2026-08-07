@@ -16,6 +16,7 @@
     completionTimer: null,
     preparedKey: '',
     mediaAttachedCount: 0,
+    cancelledRequestIds: new Set(),
   };
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -430,6 +431,9 @@
     const nextMessage = String(payload.message || '').trim();
     const nextMedia = normalizeMedia(payload.media);
     const preparedKey = `${nextRequestId}:${nextTaskId}`;
+    if (state.cancelledRequestIds.has(nextRequestId)) {
+      return { ok: false, final: true, cancelled: true };
+    }
 
     if (
       state.preparedKey === preparedKey
@@ -479,6 +483,9 @@
       showStatus(error, 'error');
       return { ok: false, error };
     }
+    if (state.cancelledRequestIds.has(nextRequestId)) {
+      return { ok: false, final: true, cancelled: true };
+    }
 
     const filled = await setEditorText(editor, state.message);
     if (!filled) {
@@ -486,10 +493,16 @@
       showStatus(error, 'error');
       return { ok: false, error };
     }
+    if (state.cancelledRequestIds.has(nextRequestId)) {
+      return { ok: false, final: true, cancelled: true };
+    }
 
     state.editor = editor;
     state.dialog = dialog;
     const mediaResult = await attachMedia(state.dialog, state.media);
+    if (state.cancelledRequestIds.has(nextRequestId)) {
+      return { ok: false, final: true, cancelled: true };
+    }
     if (!mediaResult.ok) {
       const error = `Không gắn được media: ${mediaResult.error}`;
       showStatus(`${error}\nHàng đợi đã dừng để tránh đăng bài thiếu ảnh/video.`, 'error');
@@ -603,6 +616,22 @@
   document.addEventListener('click', handlePostIntent, true);
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type === 'STREAL_FACEBOOK_CANCEL_GROUP_POST') {
+      if (!message.requestId || message.requestId !== state.requestId) {
+        sendResponse({ ok: true, alreadyStopped: true });
+        return false;
+      }
+      if (state.completionTimer) clearInterval(state.completionTimer);
+      state.cancelledRequestIds.add(message.requestId);
+      state.completionTimer = null;
+      state.requestId = '';
+      state.taskId = '';
+      state.preparedKey = '';
+      state.postClickedAt = 0;
+      showStatus('Đã hủy hàng đợi đăng Facebook. Bài chưa đăng sẽ không tự chuyển sang nơi khác.', 'error');
+      sendResponse({ ok: true, cancelled: true });
+      return false;
+    }
     if (message?.type !== 'STREAL_FACEBOOK_PREPARE_GROUP_POST') return false;
     preparePost(message.payload || {})
       .then((response) => sendResponse(response))

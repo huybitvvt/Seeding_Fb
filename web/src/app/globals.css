@@ -3109,6 +3109,20 @@ button, input, select, textarea { font-family: inherit; }
   font-size: 12px;
   font-weight: 600;
 }
+.seeding-history-cancel {
+  display: block;
+  margin-top: 9px;
+  padding: 6px 10px;
+  border: 1px solid #fecdd3;
+  border-radius: 8px;
+  background: #fff1f2;
+  color: #be123c;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.seeding-history-cancel:hover:not(:disabled) { background: #ffe4e6; }
+.seeding-history-cancel:disabled { cursor: wait; opacity: .6; }
 .pill-ok,
 .pill-danger,
 .pill-pending {

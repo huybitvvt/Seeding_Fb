@@ -79,6 +79,32 @@
       return;
     }
 
+    if (data.type === 'STREAL_FACEBOOK_GROUP_QUEUE_CANCEL_REQUEST') {
+      chrome.runtime.sendMessage(
+        {
+          type: 'STREAL_EXTENSION_CANCEL_FACEBOOK_GROUP_QUEUE',
+          requestId: data.requestId,
+        },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            postToPage({
+              type: 'STREAL_FACEBOOK_GROUP_QUEUE_CANCEL_RESPONSE',
+              requestId: data.requestId,
+              ok: false,
+              error: chrome.runtime.lastError.message || 'Extension khong phan hoi',
+            });
+            return;
+          }
+          postToPage({
+            type: 'STREAL_FACEBOOK_GROUP_QUEUE_CANCEL_RESPONSE',
+            requestId: data.requestId,
+            ...(response || { ok: false, error: 'Extension khong huy duoc hang doi Facebook' }),
+          });
+        },
+      );
+      return;
+    }
+
     if (data.type === 'STREAL_TIKTOK_COLLECT_VIDEOS_REQUEST') {
       chrome.runtime.sendMessage(
         {

@@ -129,6 +129,7 @@ function displayPostStatus(status: string) {
 
 function deliveryLabel(result?: PublishResult) {
   if (!result) return 'Đang chờ';
+  if (result.delivery === 'cancelled') return 'Đã hủy';
   if (!result.ok) return `Lỗi: ${result.error || 'không xác định'}`;
   if (result.delivery === 'pending_review') return 'Chờ Facebook kiểm duyệt';
   if (result.delivery === 'published') return 'Facebook báo đã đăng';
@@ -142,9 +143,31 @@ function deliveryLabel(result?: PublishResult) {
 
 function historyPillClass(status: string) {
   const value = status.toLowerCase();
-  if (value.includes('lỗi') || value.includes('failed') || value.includes('chưa xác nhận')) return 'pill-danger';
+  if (value.includes('lỗi') || value.includes('failed') || value.includes('chưa xác nhận') || value.includes('hủy')) return 'pill-danger';
   if (value.includes('đang') || value.includes('chờ') || value.includes('khởi tạo')) return 'pill-pending';
   return 'pill-ok';
+}
+
+function canCancelFacebookQueue(row: HistoryRow) {
+  if (!row.id.startsWith('chrome-')) return false;
+  const status = row.status.trim().toLowerCase();
+  return [
+    'đang khởi tạo',
+    'đang chuẩn bị',
+    'chờ bấm đăng',
+    'đang gửi',
+    'chưa xác nhận',
+  ].some((prefix) => status.startsWith(prefix));
+}
+
+function markFacebookQueueCancelled(row: HistoryRow): HistoryRow {
+  const completedDeliveries = new Set(['published', 'pending_review', 'submitted']);
+  const results = row.targets.map((target) => {
+    const current = row.results?.find((item) => targetKey(item.target) === targetKey(target));
+    if (current && completedDeliveries.has(String(current.delivery || ''))) return current;
+    return { ok: false, target, delivery: 'cancelled', error: 'Đã hủy bởi người dùng' };
+  });
+  return { ...row, status: 'Đã hủy bởi người dùng', results };
 }
 
 async function readPayload(res: Response) {
@@ -214,6 +237,7 @@ export function MarketingPipelinePanel({
   const [assistedQueueBusy, setAssistedQueueBusy] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [cancellingHistoryIds, setCancellingHistoryIds] = useState<Record<string, boolean>>({});
   const assistedQueueRequestRef = useRef('');
 
   useEffect(() => {
@@ -304,6 +328,11 @@ export function MarketingPipelinePanel({
         updateHistory(`Hoàn tất ${completed}/${total} · kiểm tra trạng thái từng nơi`, undefined, finalResults);
         setAssistedQueueBusy(false);
         setLocalStatus(`Hoàn tất đăng hỗ trợ ${completed}/${total} nơi. Xem trạng thái chi tiết trong lịch sử.`);
+      } else if (payload.status === 'cancelled') {
+        setHistory((prev) => prev.map((row) => row.id === historyId ? markFacebookQueueCancelled(row) : row));
+        assistedQueueRequestRef.current = '';
+        setAssistedQueueBusy(false);
+        setLocalStatus('Đã hủy hàng đợi đăng Facebook. Các Group/Page còn lại sẽ không được mở tiếp.');
       } else if (payload.status === 'confirmation_timeout') {
         updateHistory(`Chưa xác nhận tại ${targetName}`, {
           ok: false, target, delivery: 'confirmation_timeout', error: 'Facebook chưa đóng hộp soạn bài sau 45 giây.',
@@ -506,7 +535,7 @@ export function MarketingPipelinePanel({
     const response = await new Promise<Record<string, any>>((resolve) => {
       const timer = window.setTimeout(() => {
         window.removeEventListener('message', handleResponse);
-        resolve({ ok: false, error: 'Không thấy extension phản hồi. Hãy cập nhật Seeding Fsolution Bridge lên 0.1.27 và tải lại trang.' });
+        resolve({ ok: false, error: 'Không thấy extension phản hồi. Hãy cập nhật Seeding Fsolution Bridge lên 0.1.28 và tải lại trang.' });
       }, 6000);
       function handleResponse(event: MessageEvent) {
         if (event.source !== window) return;
@@ -547,6 +576,57 @@ export function MarketingPipelinePanel({
       `Đã giao ${response.targetCount || assistedTargets.length} nơi cho Chrome. `
       + 'Mỗi lần anh tự bấm Đăng xong, extension sẽ ghi trạng thái và chuyển ngay sang nơi kế tiếp.'
     );
+  }
+
+  async function cancelAssistedGroupQueue(row: HistoryRow) {
+    const requestId = row.id.startsWith('chrome-') ? row.id.slice('chrome-'.length) : '';
+    if (!requestId || cancellingHistoryIds[row.id]) return;
+    if (!window.confirm('Hủy hàng đợi này? Các Group/Page chưa xử lý sẽ không được mở tiếp.')) return;
+
+    setCancellingHistoryIds((prev) => ({ ...prev, [row.id]: true }));
+    setLocalStatus('Đang yêu cầu Chrome hủy hàng đợi Facebook...');
+    try {
+      const response = await new Promise<Record<string, any>>((resolve) => {
+        const timer = window.setTimeout(() => {
+          window.removeEventListener('message', handleResponse);
+          resolve({ ok: false, error: 'Không thấy extension phản hồi. Hãy cập nhật Seeding Fsolution Bridge lên 0.1.28 và tải lại trang.' });
+        }, 6000);
+        function handleResponse(event: MessageEvent) {
+          if (event.source !== window) return;
+          const payload = event.data || {};
+          if (payload.source !== 'streal-tiktok-extension') return;
+          if (payload.type !== 'STREAL_FACEBOOK_GROUP_QUEUE_CANCEL_RESPONSE' || payload.requestId !== requestId) return;
+          window.clearTimeout(timer);
+          window.removeEventListener('message', handleResponse);
+          resolve(payload);
+        }
+        window.addEventListener('message', handleResponse);
+        window.postMessage({
+          source: 'streal-web-page',
+          type: 'STREAL_FACEBOOK_GROUP_QUEUE_CANCEL_REQUEST',
+          requestId,
+        }, window.location.origin);
+      });
+
+      if (!response.ok) {
+        setLocalStatus(`Không hủy được hàng đợi: ${response.error || 'extension không phản hồi'}`);
+        return;
+      }
+      setHistory((prev) => prev.map((item) => item.id === row.id ? markFacebookQueueCancelled(item) : item));
+      if (assistedQueueRequestRef.current === requestId) {
+        assistedQueueRequestRef.current = '';
+        setAssistedQueueBusy(false);
+      }
+      setLocalStatus(response.alreadyStopped
+        ? 'Hàng đợi cũ không còn chạy; đã cập nhật dòng lịch sử thành Đã hủy.'
+        : 'Đã hủy hàng đợi. Các Group/Page còn lại sẽ không được mở tiếp.');
+    } finally {
+      setCancellingHistoryIds((prev) => {
+        const next = { ...prev };
+        delete next[row.id];
+        return next;
+      });
+    }
   }
 
   function appendHistory(row: Omit<HistoryRow, 'id' | 'createdAt'>) {
@@ -1082,6 +1162,16 @@ export function MarketingPipelinePanel({
                           return `${target.name}: ${deliveryLabel(result)}`;
                         }).join(' · ')}
                       </small>
+                    ) : null}
+                    {canCancelFacebookQueue(row) ? (
+                      <button
+                        type="button"
+                        className="seeding-history-cancel"
+                        disabled={!!cancellingHistoryIds[row.id]}
+                        onClick={() => void cancelAssistedGroupQueue(row)}
+                      >
+                        {cancellingHistoryIds[row.id] ? 'Đang hủy...' : 'Hủy hàng đợi'}
+                      </button>
                     ) : null}
                   </td>
                 </tr>
