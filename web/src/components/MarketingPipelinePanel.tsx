@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, AI_TIMEOUT_MS, PUBLISH_TIMEOUT_MS, UPLOAD_TIMEOUT_MS, formatFetchError } from '@/lib/api';
 import { APP_BRAND } from '@/lib/app-brand';
+import { buildFacebookPostMessage } from '@/lib/facebook-post-message';
 import type { ContentPipelinePost, FbPage, GroupRow } from '@/lib/types';
 import { PostPublishPreview } from '@/components/PostPublishPreview';
 
@@ -453,12 +454,11 @@ export function MarketingPipelinePanel({
 
   function buildMessage(target?: PublishTarget) {
     const variant = target ? captionVariants[targetKey(target)] : '';
-    const body = (variant || content).trim();
-    return [
-      title.trim(),
-      body,
-      hashtags.trim(),
-    ].filter(Boolean).join('\n\n');
+    return buildFacebookPostMessage({
+      title,
+      content: variant || content,
+      hashtags,
+    });
   }
 
   async function copyAndOpenTarget(target: PublishTarget) {
@@ -506,7 +506,7 @@ export function MarketingPipelinePanel({
     const response = await new Promise<Record<string, any>>((resolve) => {
       const timer = window.setTimeout(() => {
         window.removeEventListener('message', handleResponse);
-        resolve({ ok: false, error: 'Không thấy extension phản hồi. Hãy cập nhật Seeding Fsolution Bridge lên 0.1.23 và tải lại trang.' });
+        resolve({ ok: false, error: 'Không thấy extension phản hồi. Hãy cập nhật Seeding Fsolution Bridge lên 0.1.26 và tải lại trang.' });
       }, 6000);
       function handleResponse(event: MessageEvent) {
         if (event.source !== window) return;

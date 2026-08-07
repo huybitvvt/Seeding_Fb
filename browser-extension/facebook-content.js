@@ -14,6 +14,8 @@
     dialog: null,
     postClickedAt: 0,
     completionTimer: null,
+    preparedKey: '',
+    mediaAttachedCount: 0,
   };
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -65,22 +67,62 @@
     });
   }
 
+  const COMPOSER_TITLES = ['tạo bài viết', 'create post', 'đăng bài'];
+  const COMMENT_PHRASES = ['bình luận', 'comment', 'trả lời', 'reply'];
+
+  function nodeText(node) {
+    return normalize(`${node?.getAttribute?.('aria-label') || ''} ${node?.innerText || node?.textContent || ''}`).toLowerCase();
+  }
+
+  function isCommentControl(node) {
+    const label = nodeText(node);
+    return COMMENT_PHRASES.some((phrase) => label.includes(phrase));
+  }
+
+  function composerDialogScore(dialog) {
+    if (!isVisible(dialog)) return -1;
+    const headings = Array.from(dialog.querySelectorAll('[role="heading"], h1, h2, h3'))
+      .filter(isVisible)
+      .map(nodeText);
+    const hasComposerHeading = headings.some((heading) => COMPOSER_TITLES.includes(heading));
+    if (!hasComposerHeading) return -1;
+
+    let score = 100;
+    const dialogLabel = normalize(dialog.getAttribute('aria-label') || '').toLowerCase();
+    if (COMPOSER_TITLES.some((title) => dialogLabel.includes(title))) score += 30;
+    if (Array.from(dialog.querySelectorAll('[contenteditable="true"]')).some((node) => isVisible(node) && !isCommentControl(node))) {
+      score += 20;
+    }
+    const text = nodeText(dialog);
+    if (text.includes('thêm vào bài viết') || text.includes('add to your post')) score += 10;
+    return score;
+  }
+
   function findComposerDialog() {
     const dialogs = Array.from(document.querySelectorAll('[role="dialog"]')).filter(isVisible);
-    return dialogs.find((dialog) => {
-      const text = normalize(dialog.innerText || dialog.textContent || '').toLowerCase();
-      return text.includes('tạo bài viết') || text.includes('create post') || text.includes('đăng bài');
-    }) || dialogs.find((dialog) => dialog.querySelector('[contenteditable="true"][role="textbox"]')) || null;
+    const scored = dialogs
+      .map((dialog) => ({ dialog, score: composerDialogScore(dialog) }))
+      .filter((item) => item.score >= 100)
+      .sort((a, b) => b.score - a.score);
+    return scored[0]?.dialog || null;
   }
 
   function findComposerEditor(dialog) {
-    const root = dialog || document;
-    const candidates = Array.from(root.querySelectorAll('[contenteditable="true"][role="textbox"], [contenteditable="true"]'));
-    return candidates.find((node) => {
-      if (!isVisible(node)) return false;
-      const label = normalize(`${node.getAttribute('aria-label') || ''} ${node.getAttribute('data-lexical-editor') || ''}`).toLowerCase();
-      return !label.includes('comment') && !label.includes('bình luận') && !label.includes('search') && !label.includes('tìm kiếm');
-    }) || null;
+    if (!dialog || composerDialogScore(dialog) < 100) return null;
+    const candidates = Array.from(dialog.querySelectorAll('[contenteditable="true"][role="textbox"], [contenteditable="true"]'))
+      .filter((node) => isVisible(node) && !isCommentControl(node))
+      .map((node) => {
+        const label = nodeText(node);
+        if (label.includes('search') || label.includes('tìm kiếm')) return { node, score: -1 };
+        let score = node.getAttribute('role') === 'textbox' ? 20 : 0;
+        if (node.hasAttribute('data-lexical-editor')) score += 10;
+        if (['bạn viết gì đi', 'bạn đang nghĩ gì', "what's on your mind", 'write something']
+          .some((phrase) => label.includes(phrase))) score += 50;
+        return { node, score };
+      })
+      .filter((item) => item.score >= 0)
+      .sort((a, b) => b.score - a.score);
+    return candidates[0]?.node || null;
   }
 
   function findComposerTrigger() {
@@ -94,31 +136,105 @@
       'create post',
     ];
     const nodes = Array.from(document.querySelectorAll('[role="button"], button, [tabindex="0"]'));
-    return nodes.find((node) => {
-      if (!isVisible(node)) return false;
-      const text = normalize(`${node.getAttribute('aria-label') || ''} ${node.innerText || node.textContent || ''}`).toLowerCase();
-      return phrases.some((phrase) => text.includes(phrase));
-    }) || null;
+    const candidates = nodes
+      .filter((node) => {
+        if (!isVisible(node) || node.closest('[role="dialog"], [role="article"]') || isCommentControl(node)) return false;
+        const text = nodeText(node);
+        return phrases.some((phrase) => text.includes(phrase));
+      })
+      .map((node) => {
+        const text = nodeText(node);
+        let score = node.closest('main, [role="main"]') ? 20 : 0;
+        if (['bạn viết gì đi', 'bạn đang nghĩ gì', "what's on your mind", 'write something']
+          .some((phrase) => text.includes(phrase))) score += 80;
+        if (text === 'tạo bài viết' || text === 'create post') score += 20;
+        return { node, score };
+      })
+      .sort((a, b) => b.score - a.score);
+    return candidates[0]?.node || null;
   }
 
-  function setEditorText(editor, message) {
+  function editorContainsMessage(editor, message) {
+    const actual = normalize(editor?.innerText || editor?.textContent);
+    const expected = normalize(message);
+    if (!actual || !expected) return false;
+    if (actual === expected) return true;
+    const firstMatch = actual.indexOf(expected);
+    return firstMatch >= 0 && firstMatch === actual.lastIndexOf(expected);
+  }
+
+  function selectEditorContents(editor) {
     editor.focus();
     const selection = window.getSelection();
     const range = document.createRange();
     range.selectNodeContents(editor);
     selection.removeAllRanges();
     selection.addRange(range);
+  }
+
+  function clearEditor(editor) {
+    selectEditorContents(editor);
     try {
       document.execCommand('delete', false);
-      const lines = message.replace(/\r\n?/g, '\n').split('\n');
-      lines.forEach((line, index) => {
-        if (line) document.execCommand('insertText', false, line);
-        if (index < lines.length - 1) document.execCommand('insertParagraph', false);
-      });
     } catch {
-      // Fall through to the DOM-based fallback below.
+      // The DOM fallback below clears editors that ignore execCommand.
     }
-    if (!normalize(editor.innerText || editor.textContent)) {
+    if (normalize(editor.innerText || editor.textContent)) {
+      editor.replaceChildren();
+      editor.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'deleteContentBackward',
+        data: null,
+      }));
+    }
+  }
+
+  async function setEditorText(editor, message) {
+    if (editorContainsMessage(editor, message)) return true;
+
+    // Facebook currently uses Lexical. Its paste handler is more stable than
+    // mutating innerHTML and preserves the blank line between title and body.
+    clearEditor(editor);
+    try {
+      selectEditorContents(editor);
+      const transfer = new DataTransfer();
+      transfer.setData('text/plain', message);
+      editor.dispatchEvent(new ClipboardEvent('paste', {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: transfer,
+      }));
+    } catch {
+      // Continue with execCommand when synthetic paste is unavailable.
+    }
+    await sleep(150);
+
+    if (!editorContainsMessage(editor, message)) {
+      clearEditor(editor);
+      try {
+        selectEditorContents(editor);
+        document.execCommand('insertText', false, message);
+      } catch {
+        // Continue with the paragraph-by-paragraph fallback below.
+      }
+      await sleep(100);
+    }
+
+    if (!editorContainsMessage(editor, message)) {
+      clearEditor(editor);
+      try {
+        const lines = message.replace(/\r\n?/g, '\n').split('\n');
+        lines.forEach((line, index) => {
+          if (line) document.execCommand('insertText', false, line);
+          if (index < lines.length - 1) document.execCommand('insertParagraph', false);
+        });
+      } catch {
+        // Continue with the DOM fallback below.
+      }
+      await sleep(100);
+    }
+
+    if (!editorContainsMessage(editor, message)) {
       const fragment = document.createDocumentFragment();
       message.replace(/\r\n?/g, '\n').split('\n').forEach((line) => {
         const row = document.createElement('div');
@@ -132,9 +248,10 @@
         inputType: 'insertFromPaste',
         data: null,
       }));
+      await sleep(100);
     }
     editor.dispatchEvent(new Event('change', { bubbles: true }));
-    return normalize(editor.innerText || editor.textContent).length > 0;
+    return editorContainsMessage(editor, message);
   }
 
   function normalizeMedia(items) {
@@ -198,7 +315,8 @@
   }
 
   function findMediaInput(dialog) {
-    const roots = [dialog].filter(Boolean);
+    if (!dialog || composerDialogScore(dialog) < 100) return null;
+    const roots = [dialog];
     const candidates = [];
     roots.forEach((root, rootIndex) => {
       root.querySelectorAll('input[type="file"]').forEach((input) => {
@@ -216,6 +334,18 @@
     return candidates[0]?.input || null;
   }
 
+  function findNewDetachedMediaInput(previousInputs) {
+    const freshInputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((input) => {
+      if (previousInputs.has(input)) return false;
+      const accept = String(input.getAttribute('accept') || '').toLowerCase();
+      return accept.includes('image') || accept.includes('video');
+    });
+    // Facebook occasionally mounts the picker in a portal outside the dialog.
+    // Only accept an unambiguous input created by our media-button click so an
+    // existing comment attachment control can never be selected.
+    return freshInputs.length === 1 ? freshInputs[0] : null;
+  }
+
   function findMediaTrigger(dialog) {
     if (!dialog) return null;
     const phrases = ['ảnh/video', 'ảnh hoặc video', 'photo/video', 'photo or video', 'add photos', 'add photo'];
@@ -227,13 +357,15 @@
   }
 
   async function waitForMediaInput(dialog) {
+    if (!dialog || composerDialogScore(dialog) < 100) return null;
     let input = findMediaInput(dialog);
     if (input) return input;
+    const previousInputs = new Set(document.querySelectorAll('input[type="file"]'));
     const trigger = findMediaTrigger(dialog);
     if (trigger) trigger.click();
     for (let attempt = 0; attempt < 20 && !input; attempt += 1) {
       await sleep(250);
-      input = findMediaInput(dialog);
+      input = findMediaInput(dialog) || findNewDetachedMediaInput(previousInputs);
     }
     return input;
   }
@@ -290,13 +422,34 @@
   }
 
   async function preparePost(payload) {
-    state.requestId = String(payload.requestId || '');
-    state.taskId = String(payload.taskId || '');
-    state.targetType = payload.targetType === 'page' ? 'page' : 'group';
-    state.groupId = String(payload.targetId || payload.groupId || '');
-    state.groupName = String(payload.targetName || payload.groupName || state.groupId || 'Facebook');
-    state.message = String(payload.message || '').trim();
-    state.media = normalizeMedia(payload.media);
+    const nextRequestId = String(payload.requestId || '');
+    const nextTaskId = String(payload.taskId || '');
+    const nextTargetType = payload.targetType === 'page' ? 'page' : 'group';
+    const nextGroupId = String(payload.targetId || payload.groupId || '');
+    const nextGroupName = String(payload.targetName || payload.groupName || nextGroupId || 'Facebook');
+    const nextMessage = String(payload.message || '').trim();
+    const nextMedia = normalizeMedia(payload.media);
+    const preparedKey = `${nextRequestId}:${nextTaskId}`;
+
+    if (
+      state.preparedKey === preparedKey
+      && state.dialog?.isConnected
+      && composerDialogScore(state.dialog) >= 100
+      && state.editor?.isConnected
+      && editorContainsMessage(state.editor, nextMessage)
+    ) {
+      return { ok: true, ready: true, media_attached_count: state.mediaAttachedCount };
+    }
+
+    state.requestId = nextRequestId;
+    state.taskId = nextTaskId;
+    state.targetType = nextTargetType;
+    state.groupId = nextGroupId;
+    state.groupName = nextGroupName;
+    state.message = nextMessage;
+    state.media = nextMedia;
+    state.preparedKey = '';
+    state.mediaAttachedCount = 0;
     state.postClickedAt = 0;
     if (state.completionTimer) clearInterval(state.completionTimer);
 
@@ -327,7 +480,7 @@
       return { ok: false, error };
     }
 
-    const filled = setEditorText(editor, state.message);
+    const filled = await setEditorText(editor, state.message);
     if (!filled) {
       const error = 'Không điền được caption. Hãy dán nội dung thủ công rồi bấm Đăng.';
       showStatus(error, 'error');
@@ -335,7 +488,7 @@
     }
 
     state.editor = editor;
-    state.dialog = dialog || editor.closest('[role="dialog"]');
+    state.dialog = dialog;
     const mediaResult = await attachMedia(state.dialog, state.media);
     if (!mediaResult.ok) {
       const error = `Không gắn được media: ${mediaResult.error}`;
@@ -343,6 +496,9 @@
       sendProgress('media_error', { error });
       return { ok: false, final: true, error };
     }
+
+    state.preparedKey = preparedKey;
+    state.mediaAttachedCount = mediaResult.attachedCount;
 
     const mediaHint = mediaResult.attachedCount
       ? ` và chọn ${mediaResult.attachedCount} media`

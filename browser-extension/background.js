@@ -943,14 +943,23 @@ async function startFacebookGroupQueue(request, sender) {
   const existingIsActive = existing?.tasks?.length
     && existing.index < existing.tasks.length
     && !['paused', 'done'].includes(existing.status);
-  if (existingIsActive) {
+  const existingAgeMs = existing?.createdAt
+    ? Math.max(0, Date.now() - new Date(existing.createdAt).getTime())
+    : Number.POSITIVE_INFINITY;
+  // A queue left at `ready` means Facebook was prepared but the user closed the
+  // composer or reloaded the web app before confirmation. Starting a new queue
+  // is an explicit replacement of that abandoned attempt. Very old queues are
+  // also safe to replace after an extension/browser interruption.
+  const canReplaceExisting = existingIsActive
+    && (existing.status === 'ready' || existingAgeMs > 10 * 60 * 1000);
+  if (existingIsActive && !canReplaceExisting) {
     return { ok: false, error: 'Dang co mot hang doi Facebook chua hoan thanh.' };
   }
 
   const queue = {
     requestId: String(request.requestId || `facebook_queue_${Date.now()}`),
     originTabId: sender?.tab?.id || null,
-    facebookTabId: null,
+    facebookTabId: canReplaceExisting ? (existing.facebookTabId || null) : null,
     index: 0,
     status: 'queued',
     tasks,
