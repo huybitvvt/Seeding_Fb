@@ -348,6 +348,16 @@ export function MarketingPipelinePanel({
             ? `Đã điền caption và chọn ${attached} media tại ${targetName}. Kiểm tra preview rồi tự bấm Đăng.`
             : `Đã điền caption tại ${targetName}. Kiểm tra rồi tự bấm Đăng.`
         );
+      } else if (payload.status === 'auto_ready') {
+        const attached = Number(payload.mediaAttachedCount || 0);
+        updateHistory(`Đang tự động đăng ${Number(payload.currentNumber || completed + 1)}/${total}`, {
+          ok: true, target, delivery: 'submitting',
+        });
+        setLocalStatus(
+          attached
+            ? `Đã điền caption và xác nhận ${attached} media tại ${targetName}. Extension đang tự bấm Đăng.`
+            : `Đã điền caption tại ${targetName}. Extension đang tự bấm Đăng.`
+        );
       } else if (payload.status === 'submitting') {
         updateHistory(`Đang gửi ${completed + 1}/${total}`, {
           ok: true, target, delivery: 'submitting',
@@ -599,7 +609,7 @@ export function MarketingPipelinePanel({
     const response = await new Promise<Record<string, any>>((resolve) => {
       const timer = window.setTimeout(() => {
         window.removeEventListener('message', handleResponse);
-        resolve({ ok: false, error: 'Không thấy extension phản hồi. Hãy cập nhật Seeding Fsolution Bridge lên 0.1.28 và tải lại trang.' });
+        resolve({ ok: false, error: 'Không thấy extension phản hồi. Hãy cập nhật Seeding Fsolution Bridge lên 0.1.29 và tải lại trang.' });
       }, 6000);
       function handleResponse(event: MessageEvent) {
         if (event.source !== window) return;
@@ -638,7 +648,7 @@ export function MarketingPipelinePanel({
     }
     setLocalStatus(
       `Đã giao ${response.targetCount || assistedTargets.length} nơi cho Chrome. `
-      + 'Mỗi lần anh tự bấm Đăng xong, extension sẽ ghi trạng thái và chuyển ngay sang nơi kế tiếp.'
+      + 'Extension sẽ tự bấm Đăng, ghi trạng thái và chuyển sang nơi kế tiếp sau khi Facebook xác nhận.'
     );
   }
 
@@ -653,7 +663,7 @@ export function MarketingPipelinePanel({
       const response = await new Promise<Record<string, any>>((resolve) => {
         const timer = window.setTimeout(() => {
           window.removeEventListener('message', handleResponse);
-          resolve({ ok: false, error: 'Không thấy extension phản hồi. Hãy cập nhật Seeding Fsolution Bridge lên 0.1.28 và tải lại trang.' });
+          resolve({ ok: false, error: 'Không thấy extension phản hồi. Hãy cập nhật Seeding Fsolution Bridge lên 0.1.29 và tải lại trang.' });
         }, 6000);
         function handleResponse(event: MessageEvent) {
           if (event.source !== window) return;
@@ -1390,7 +1400,7 @@ export function MarketingPipelinePanel({
           <div className="target-note">
             File ảnh/video upload từ máy sẽ đăng dạng media thật; link YouTube/TikTok hoặc link dán tay sẽ đăng dạng link preview.
             Facebook Page vẫn hỗ trợ đăng qua API; Group có thể bị Meta từ chối do Groups API đã ngừng hỗ trợ.
-            Với <b>Đăng qua Chrome</b>, extension xử lý lần lượt cả Group và Page, ghi trạng thái từng nơi; nhân viên tự bấm Đăng rồi hệ thống chuyển ngay sang nơi tiếp theo.
+            Với <b>Đăng qua Chrome</b>, extension xử lý lần lượt cả Group và Page, tự bấm Đăng khi caption/media sẵn sàng, ghi trạng thái từng nơi rồi chuyển sang nơi tiếp theo. Nếu Facebook báo lỗi hoặc chặn thao tác, hàng đợi sẽ dừng.
           </div>
         </aside>
       </div>

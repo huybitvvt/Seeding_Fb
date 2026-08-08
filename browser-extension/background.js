@@ -914,10 +914,10 @@ async function openCurrentFacebookQueueTask(queue) {
     return { ok: false, error: queue.error };
   }
 
-  queue.status = 'ready';
+  queue.status = response.auto_submit ? 'auto_submitting' : 'ready';
   queue.error = '';
   await storageSet(FACEBOOK_QUEUE_STORAGE_KEY, queue);
-  await notifyFacebookQueue(queue, 'ready', {
+  await notifyFacebookQueue(queue, response.auto_submit ? 'auto_ready' : 'ready', {
     targetType,
     targetId: task.id,
     targetName: task.name,
@@ -959,10 +959,10 @@ async function startFacebookGroupQueue(request, sender) {
   const existingAgeMs = existing?.createdAt
     ? Math.max(0, Date.now() - new Date(existing.createdAt).getTime())
     : Number.POSITIVE_INFINITY;
-  // A queue left at `ready` means Facebook was prepared but the user closed the
-  // composer or reloaded the web app before confirmation. Starting a new queue
-  // is an explicit replacement of that abandoned attempt. Very old queues are
-  // also safe to replace after an extension/browser interruption.
+  // A queue left at `ready` means an older extension prepared Facebook but the
+  // user closed the composer or reloaded the web app before confirmation. A new
+  // queue explicitly replaces that abandoned attempt. Any active queue is also
+  // safe to replace after a long extension/browser interruption.
   const canReplaceExisting = existingIsActive
     && (existing.status === 'ready' || existingAgeMs > 10 * 60 * 1000);
   if (existingIsActive && !canReplaceExisting) {
@@ -1036,6 +1036,22 @@ async function handleFacebookQueueEvent(message, sender) {
     return { ok: false, error: 'Xac nhan den tu sai tab Facebook.' };
   }
 
+  if (['auto_submit_error', 'facebook_error', 'confirmation_timeout'].includes(message.status)) {
+    queue.status = 'paused';
+    queue.error = message.error || 'Facebook khong xac nhan duoc thao tac dang.';
+    await storageSet(FACEBOOK_QUEUE_STORAGE_KEY, queue);
+    await notifyFacebookQueue(queue, 'error', {
+      targetType: task.type,
+      targetId: task.id,
+      targetName: task.name,
+      groupId: task.id,
+      groupName: task.name,
+      currentNumber: queue.index + 1,
+      error: queue.error,
+    });
+    return { ok: false, error: queue.error };
+  }
+
   if (message.status !== 'confirmed') {
     await notifyFacebookQueue(queue, message.status || 'progress', {
       targetType: task.type,
@@ -1056,7 +1072,7 @@ async function handleFacebookQueueEvent(message, sender) {
     name: task.name,
     confirmedAt: message.confirmedAt || new Date().toISOString(),
     delivery: ['published', 'pending_review'].includes(message.outcome) ? message.outcome : 'submitted',
-    method: 'user-confirmed-chrome',
+    method: message.automatic ? 'auto-chrome-composer' : 'user-confirmed-chrome',
   }];
   queue.index += 1;
   queue.status = queue.index >= queue.tasks.length ? 'done' : 'advancing';

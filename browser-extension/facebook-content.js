@@ -14,6 +14,9 @@
     dialog: null,
     postClickedAt: 0,
     completionTimer: null,
+    autoSubmitTimer: null,
+    submissionAutomatic: false,
+    preSubmitFailureNotices: new Set(),
     preparedKey: '',
     mediaAttachedCount: 0,
     cancelledRequestIds: new Set(),
@@ -372,7 +375,7 @@
   }
 
   async function attachMedia(dialog, items) {
-    if (!items.length) return { ok: true, attachedCount: 0 };
+    if (!items.length) return { ok: true, attachedCount: 0, previewDetected: true, mediaNodeCountBefore: 0 };
     const input = await waitForMediaInput(dialog);
     if (!input) return { ok: false, error: 'Không tìm thấy nút chọn ảnh/video trong hộp soạn bài Facebook.' };
 
@@ -412,14 +415,14 @@
         return ['xóa ảnh', 'xóa video', 'remove photo', 'remove video', 'chỉnh sửa', 'edit photo'].some((phrase) => label.includes(phrase));
       });
       if (mediaNodeCount > mediaNodeCountBefore || hasMediaControl) {
-        return { ok: true, attachedCount: assignedCount, previewDetected: true };
+        return { ok: true, attachedCount: assignedCount, previewDetected: true, mediaNodeCountBefore };
       }
       await sleep(250);
     }
     // Facebook often consumes and clears input.files immediately after accepting the
-    // change event. The successful assignment above is the reliable hand-off signal;
-    // the employee still verifies the Facebook preview before clicking Post.
-    return { ok: true, attachedCount: assignedCount, previewDetected: false };
+    // change event. Keep the successful hand-off, then let the auto-submit guard wait
+    // for a visible preview before it is allowed to click Post.
+    return { ok: true, attachedCount: assignedCount, previewDetected: false, mediaNodeCountBefore };
   }
 
   async function preparePost(payload) {
@@ -442,7 +445,7 @@
       && state.editor?.isConnected
       && editorContainsMessage(state.editor, nextMessage)
     ) {
-      return { ok: true, ready: true, media_attached_count: state.mediaAttachedCount };
+      return { ok: true, ready: true, auto_submit: true, media_attached_count: state.mediaAttachedCount };
     }
 
     state.requestId = nextRequestId;
@@ -455,7 +458,10 @@
     state.preparedKey = '';
     state.mediaAttachedCount = 0;
     state.postClickedAt = 0;
+    state.submissionAutomatic = false;
     if (state.completionTimer) clearInterval(state.completionTimer);
+    if (state.autoSubmitTimer) clearTimeout(state.autoSubmitTimer);
+    state.autoSubmitTimer = null;
 
     if (!state.message) return { ok: false, error: 'Bài đăng chưa có nội dung.' };
 
@@ -517,11 +523,25 @@
       ? ` và chọn ${mediaResult.attachedCount} media`
       : '';
     const previewHint = mediaResult.attachedCount && !mediaResult.previewDetected
-      ? '\nFile đã được chuyển cho Facebook; đợi preview xuất hiện rồi mới bấm Đăng.'
+      ? '\nĐang đợi Facebook hiển thị đủ preview media.'
       : '';
-    showStatus(`Đã điền caption${mediaHint} cho ${state.groupName}.${previewHint}\nKiểm tra preview và tự bấm Đăng. Xong sẽ chuyển ngay sang Group tiếp theo.`);
-    sendProgress('ready', { mediaAttachedCount: mediaResult.attachedCount });
-    return { ok: true, ready: true, media_attached_count: mediaResult.attachedCount };
+    showStatus(`Đã điền caption${mediaHint} cho ${state.groupName}.${previewHint}\nExtension sẽ tự bấm Đăng khi bài viết sẵn sàng.`);
+    state.autoSubmitTimer = setTimeout(() => {
+      state.autoSubmitTimer = null;
+      autoSubmitPreparedPost(preparedKey, {
+        attachedCount: mediaResult.attachedCount,
+        mediaNodeCountBefore: Number(mediaResult.mediaNodeCountBefore || 0),
+        previewDetected: Boolean(mediaResult.previewDetected),
+      }).catch((error) => {
+        failAutomaticSubmission(preparedKey, error?.message || String(error));
+      });
+    }, 1200);
+    return {
+      ok: true,
+      ready: true,
+      auto_submit: true,
+      media_attached_count: mediaResult.attachedCount,
+    };
   }
 
   function resolvePostButton(node) {
@@ -544,6 +564,88 @@
     const currentDialogMatches = buttonDialog && composerDialogScore(buttonDialog) >= 100;
     if (!storedDialogMatches && !currentDialogMatches) return null;
     return { button, dialog: buttonDialog || state.dialog };
+  }
+
+  function findPostButton(dialog) {
+    if (!dialog || composerDialogScore(dialog) < 100) return null;
+    const candidates = Array.from(dialog.querySelectorAll('button, [role="button"]'));
+    for (const candidate of candidates) {
+      const match = resolvePostButton(candidate);
+      if (match) return match;
+    }
+    return null;
+  }
+
+  function hasMediaPreview(dialog, mediaNodeCountBefore) {
+    if (!dialog?.isConnected || composerDialogScore(dialog) < 100) return false;
+    if (dialog.querySelectorAll('img, video').length > mediaNodeCountBefore) return true;
+    return Array.from(dialog.querySelectorAll('button, [role="button"], [aria-label]')).some((node) => {
+      const label = nodeText(node);
+      return ['xóa ảnh', 'xóa video', 'remove photo', 'remove video', 'chỉnh sửa ảnh', 'edit photo']
+        .some((phrase) => label.includes(phrase));
+    });
+  }
+
+  function failAutomaticSubmission(preparedKey, error) {
+    if (state.preparedKey !== preparedKey || state.cancelledRequestIds.has(state.requestId)) return;
+    state.preparedKey = '';
+    state.postClickedAt = 0;
+    state.submissionAutomatic = false;
+    showStatus(`${error}\nHàng đợi đã dừng để tránh đăng sai hoặc đăng lặp.`, 'error');
+    sendProgress('auto_submit_error', { error });
+  }
+
+  function beginPostSubmission(match, automatic = false) {
+    if (!match || !state.requestId || !state.preparedKey || state.postClickedAt) return false;
+    state.dialog = match.dialog;
+    state.postClickedAt = Date.now();
+    state.submissionAutomatic = automatic;
+    state.preSubmitFailureNotices = new Set(
+      collectPostFailures().map((notice) => notice.toLowerCase()),
+    );
+    showStatus(`Đang chờ Facebook xác nhận bài tại ${state.groupName}...`);
+    sendProgress('submitting', { automatic });
+    watchForCompletion();
+    return true;
+  }
+
+  async function autoSubmitPreparedPost(preparedKey, mediaState) {
+    let stableReadyChecks = 0;
+    let lastReason = 'Không tìm thấy nút Đăng hợp lệ trong hộp soạn bài Facebook.';
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      if (state.cancelledRequestIds.has(state.requestId) || state.preparedKey !== preparedKey) return;
+      const dialog = state.dialog?.isConnected && composerDialogScore(state.dialog) >= 100
+        ? state.dialog
+        : findComposerDialog();
+      const editor = findComposerEditor(dialog);
+      const captionReady = editorContainsMessage(editor, state.message);
+      const previewReady = !mediaState.attachedCount
+        || mediaState.previewDetected
+        || hasMediaPreview(dialog, mediaState.mediaNodeCountBefore);
+      const match = findPostButton(dialog);
+
+      if (!captionReady) lastReason = 'Không xác nhận được caption trong hộp soạn bài Facebook.';
+      else if (!previewReady) lastReason = 'Facebook chưa hiển thị preview ảnh/video nên extension không tự đăng.';
+      else if (!match) lastReason = 'Nút Đăng chưa xuất hiện hoặc vẫn đang bị vô hiệu hóa.';
+
+      if (captionReady && previewReady && match) {
+        stableReadyChecks += 1;
+        if (stableReadyChecks >= 2) {
+          if (!beginPostSubmission(match, true)) return;
+          try {
+            match.button.click();
+          } catch (error) {
+            state.postClickedAt = 0;
+            failAutomaticSubmission(preparedKey, `Không tự bấm được nút Đăng: ${error?.message || String(error)}`);
+          }
+          return;
+        }
+      } else {
+        stableReadyChecks = 0;
+      }
+      await sleep(500);
+    }
+    failAutomaticSubmission(preparedKey, `${lastReason} Đã chờ 30 giây.`);
   }
 
   function detectPostOutcome() {
@@ -571,21 +673,75 @@
     return 'submitted';
   }
 
+  function collectPostFailures() {
+    const notices = Array.from(document.querySelectorAll('[role="alert"], [role="status"]'))
+      .filter(isVisible)
+      .map((node) => normalize(node.innerText || node.textContent))
+      .filter(Boolean);
+    const failurePhrases = [
+      'không thể đăng',
+      'không thể chia sẻ',
+      'đã xảy ra lỗi',
+      'thử lại sau',
+      'tạm thời bị chặn',
+      'chúng tôi hạn chế tần suất',
+      "couldn't post",
+      'unable to post',
+      'something went wrong',
+      'try again later',
+      'temporarily blocked',
+      'we limit how often',
+    ];
+    return notices.filter((notice) => {
+      const normalizedNotice = notice.toLowerCase();
+      return failurePhrases.some((phrase) => normalizedNotice.includes(phrase));
+    });
+  }
+
+  function detectPostFailure() {
+    return collectPostFailures().find(
+      (notice) => !state.preSubmitFailureNotices.has(notice.toLowerCase()),
+    ) || '';
+  }
+
   function watchForCompletion() {
     if (state.completionTimer) clearInterval(state.completionTimer);
     state.completionTimer = setInterval(() => {
       if (!state.postClickedAt) return;
+      const facebookFailure = detectPostFailure();
+      if (facebookFailure) {
+        clearInterval(state.completionTimer);
+        state.completionTimer = null;
+        state.postClickedAt = 0;
+        state.preparedKey = '';
+        const error = `Facebook từ chối đăng: ${facebookFailure}`;
+        showStatus(`${error}\nHàng đợi đã dừng.`, 'error');
+        sendProgress('facebook_error', { error, automatic: state.submissionAutomatic });
+        return;
+      }
       const dialogGone = !state.dialog || !state.dialog.isConnected || !isVisible(state.dialog);
       if (dialogGone) {
         clearInterval(state.completionTimer);
         state.completionTimer = null;
         setTimeout(() => {
+          const delayedFailure = detectPostFailure();
+          if (delayedFailure) {
+            state.preparedKey = '';
+            const error = `Facebook từ chối đăng: ${delayedFailure}`;
+            showStatus(`${error}\nHàng đợi đã dừng.`, 'error');
+            sendProgress('facebook_error', { error, automatic: state.submissionAutomatic });
+            return;
+          }
           const outcome = detectPostOutcome();
           const outcomeText = outcome === 'pending_review'
             ? 'Facebook báo đang chờ kiểm duyệt'
             : outcome === 'published' ? 'Facebook báo đã đăng' : 'đã gửi thao tác đăng';
           showStatus(`Đã ghi nhận ${state.groupName}: ${outcomeText}. Đang chuyển nơi tiếp theo...`, 'success');
-          sendProgress('confirmed', { confirmedAt: new Date().toISOString(), outcome });
+          sendProgress('confirmed', {
+            confirmedAt: new Date().toISOString(),
+            outcome,
+            automatic: state.submissionAutomatic,
+          });
         }, 800);
         return;
       }
@@ -593,8 +749,10 @@
         clearInterval(state.completionTimer);
         state.completionTimer = null;
         state.postClickedAt = 0;
-        showStatus('Facebook chưa xác nhận đăng xong. Kiểm tra thông báo lỗi rồi bấm Đăng lại.', 'error');
-        sendProgress('confirmation_timeout');
+        state.preparedKey = '';
+        const error = 'Facebook chưa xác nhận đăng xong sau 45 giây.';
+        showStatus(`${error}\nHàng đợi đã dừng để tránh đăng lặp.`, 'error');
+        sendProgress('confirmation_timeout', { error, automatic: state.submissionAutomatic });
       }
     }, 500);
   }
@@ -605,11 +763,7 @@
     if (!match) return;
     // Capture pointerdown as well as click because Facebook may replace/remove
     // the composer during its own click handler before a later listener runs.
-    state.dialog = match.dialog;
-    state.postClickedAt = Date.now();
-    showStatus(`Đang chờ Facebook xác nhận bài tại ${state.groupName}...`);
-    sendProgress('submitting');
-    watchForCompletion();
+    beginPostSubmission(match, false);
   }
 
   document.addEventListener('pointerdown', handlePostIntent, true);
@@ -622,12 +776,16 @@
         return false;
       }
       if (state.completionTimer) clearInterval(state.completionTimer);
+      if (state.autoSubmitTimer) clearTimeout(state.autoSubmitTimer);
       state.cancelledRequestIds.add(message.requestId);
       state.completionTimer = null;
+      state.autoSubmitTimer = null;
       state.requestId = '';
       state.taskId = '';
       state.preparedKey = '';
       state.postClickedAt = 0;
+      state.submissionAutomatic = false;
+      state.preSubmitFailureNotices = new Set();
       showStatus('Đã hủy hàng đợi đăng Facebook. Bài chưa đăng sẽ không tự chuyển sang nơi khác.', 'error');
       sendResponse({ ok: true, cancelled: true });
       return false;
