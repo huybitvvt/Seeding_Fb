@@ -1,11 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Download, X } from 'lucide-react';
 import { api, AI_TIMEOUT_MS, PUBLISH_TIMEOUT_MS, UPLOAD_TIMEOUT_MS, formatFetchError } from '@/lib/api';
 import { APP_BRAND } from '@/lib/app-brand';
 import { buildFacebookPostMessage } from '@/lib/facebook-post-message';
 import type { ContentPipelinePost, FbPage, GroupRow } from '@/lib/types';
 import { PostPublishPreview } from '@/components/PostPublishPreview';
+import type { SheetData } from 'write-excel-file/browser';
 
 type PipelinePayload = {
   posts?: ContentPipelinePost[];
@@ -19,6 +21,7 @@ type Props = {
   onResearch: (sourceFilter: string) => Promise<void>;
   initialGroups?: GroupRow[];
   initialPages?: FbPage[];
+  staffName?: string;
 };
 
 type PublishTarget = {
@@ -48,11 +51,29 @@ type HistoryRow = {
   targets: PublishTarget[];
   status: string;
   results?: PublishResult[];
+  publisherName?: string;
   createdAt: string;
 };
 
 const HISTORY_KEY = 'seeding-post-history-v2';
 const PUBLISH_INTERVAL_MINUTES = 5;
+const VIETNAM_TIME_ZONE = 'Asia/Ho_Chi_Minh';
+const historyDateKeyFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: VIETNAM_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+const historyDateTimeFormatter = new Intl.DateTimeFormat('vi-VN', {
+  timeZone: VIETNAM_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+});
 
 const PARTNER_POST_PRESETS = [
   {
@@ -106,7 +127,19 @@ function formatDateTime(value?: string) {
   if (!value) return '-';
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleString('vi-VN');
+  return historyDateTimeFormatter.format(parsed);
+}
+
+function historyDateKey(value?: string) {
+  if (!value) return '';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '';
+  const parts = historyDateKeyFormatter.formatToParts(parsed);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value || '';
+  const year = part('year');
+  const month = part('month');
+  const day = part('day');
+  return year && month && day ? `${year}-${month}-${day}` : '';
 }
 
 function historyFingerprint(row: Pick<HistoryRow, 'title' | 'content' | 'scheduledAt' | 'targets'>) {
@@ -139,6 +172,16 @@ function deliveryLabel(result?: PublishResult) {
   if (result.delivery === 'opening') return 'Đang mở Facebook';
   if (result.post_id) return 'Đã đăng';
   return result.delivery || 'Đã xử lý';
+}
+
+function publishResultPerformance(result?: PublishResult) {
+  if (!result) return 'pending';
+  if (result.delivery === 'cancelled') return 'cancelled';
+  if (!result.ok) return 'failed';
+  if (!result.delivery || result.post_id || ['published', 'pending_review', 'submitted'].includes(result.delivery)) {
+    return 'success';
+  }
+  return 'pending';
 }
 
 function historyPillClass(status: string) {
@@ -218,6 +261,7 @@ export function MarketingPipelinePanel({
   onReload,
   initialGroups = [],
   initialPages = [],
+  staffName = '',
 }: Props) {
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
@@ -238,6 +282,10 @@ export function MarketingPipelinePanel({
   const [generating, setGenerating] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [cancellingHistoryIds, setCancellingHistoryIds] = useState<Record<string, boolean>>({});
+  const [historyFromDate, setHistoryFromDate] = useState('');
+  const [historyToDate, setHistoryToDate] = useState('');
+  const [historyExporting, setHistoryExporting] = useState(false);
+  const [historyExportError, setHistoryExportError] = useState('');
   const assistedQueueRequestRef = useRef('');
 
   useEffect(() => {
@@ -382,7 +430,9 @@ export function MarketingPipelinePanel({
         target: { type: item.type === 'page' ? 'page' : 'group', id: item.id || '', name: item.name || item.id || '' },
         post_id: item.post_id,
         error: item.error,
+        delivery: item.delivery,
       })),
+      publisherName: post.created_by_staff_name || 'Không xác định',
       createdAt: post.created_at || post.updated_at || '',
     }));
   }, [data.posts]);
@@ -397,6 +447,19 @@ export function MarketingPipelinePanel({
       return true;
     });
   }, [history, importedHistory]);
+
+  const invalidHistoryRange = Boolean(historyFromDate && historyToDate && historyFromDate > historyToDate);
+  const filteredHistory = useMemo(() => {
+    if (invalidHistoryRange) return [];
+    return visibleHistory.filter((row) => {
+      if (!historyFromDate && !historyToDate) return true;
+      const dateKey = historyDateKey(row.createdAt);
+      if (!dateKey) return false;
+      if (historyFromDate && dateKey < historyFromDate) return false;
+      if (historyToDate && dateKey > historyToDate) return false;
+      return true;
+    });
+  }, [historyFromDate, historyToDate, invalidHistoryRange, visibleHistory]);
 
   async function loadTargets() {
     setLoadingTargets(true);
@@ -529,6 +592,7 @@ export function MarketingPipelinePanel({
       targets: assistedTargets,
       status: 'Đang khởi tạo qua Chrome',
       results: [],
+      publisherName: staffName || 'Không xác định',
       createdAt: new Date().toISOString(),
     }, ...prev.filter((row) => row.id !== historyId)].slice(0, 80));
 
@@ -629,9 +693,218 @@ export function MarketingPipelinePanel({
     }
   }
 
+  async function exportPostHistoryExcel() {
+    if (invalidHistoryRange || !filteredHistory.length || historyExporting) return;
+    setHistoryExporting(true);
+    setHistoryExportError('');
+    try {
+      const { default: writeXlsxFile } = await import('write-excel-file/browser');
+      const header = (value: string) => ({
+        value,
+        type: String,
+        fontWeight: 'bold' as const,
+        textColor: '#FFFFFF',
+        backgroundColor: '#1D4ED8',
+        align: 'center' as const,
+        alignVertical: 'center' as const,
+        height: 28,
+        borderColor: '#B8C5D9',
+        borderStyle: 'thin' as const,
+      });
+      const textCell = (value: unknown, wrap = false) => ({
+        value: String(value ?? ''),
+        type: String,
+        format: '@',
+        wrap,
+        alignVertical: 'top' as const,
+        borderColor: '#D9E1EC',
+        borderStyle: 'thin' as const,
+      });
+      const numberCell = (value: number, backgroundColor = '') => ({
+        value,
+        type: Number,
+        align: 'center' as const,
+        alignVertical: 'center' as const,
+        backgroundColor: backgroundColor || undefined,
+        borderColor: '#D9E1EC',
+        borderStyle: 'thin' as const,
+      });
+      const percentageCell = (value: number) => ({
+        value,
+        type: Number,
+        format: '0.0%',
+        align: 'center' as const,
+        alignVertical: 'center' as const,
+        borderColor: '#D9E1EC',
+        borderStyle: 'thin' as const,
+      });
+
+      const historySheet: SheetData = [
+        [
+          header('STT'),
+          header('Thời gian'),
+          header('Người đăng'),
+          header('Tiêu đề'),
+          header('Nội dung'),
+          header('Media'),
+          header('Lịch đăng'),
+          header('Nơi đăng'),
+          header('Trạng thái'),
+          header('Kết quả từng nơi'),
+        ],
+        ...filteredHistory.map((row, index) => [
+          numberCell(index + 1),
+          textCell(formatDateTime(row.createdAt)),
+          textCell(row.publisherName || 'Không xác định'),
+          textCell(row.title || 'Bài đăng', true),
+          textCell(row.content || '', true),
+          textCell(row.mediaUrls?.length ? `${row.mediaUrls.length} media` : row.mediaUrl || ''),
+          textCell(formatDateTime(row.scheduledAt)),
+          textCell(row.targets.map((target) => target.name || target.id).join(', '), true),
+          textCell(displayPostStatus(row.status), true),
+          textCell(row.targets.map((target) => {
+            const result = row.results?.find((item) => targetKey(item.target) === targetKey(target));
+            return `${target.name || target.id}: ${deliveryLabel(result)}`;
+          }).join(' · '), true),
+        ]),
+      ];
+
+      type PublisherStats = {
+        name: string;
+        posts: number;
+        completedPosts: number;
+        targets: number;
+        successfulTargets: number;
+        failedTargets: number;
+        cancelledTargets: number;
+        pendingTargets: number;
+      };
+      const statsByPublisher = new Map<string, PublisherStats>();
+      filteredHistory.forEach((row) => {
+        const name = row.publisherName || 'Không xác định';
+        const key = name.trim().toLocaleLowerCase('vi') || 'không xác định';
+        const stats = statsByPublisher.get(key) || {
+          name,
+          posts: 0,
+          completedPosts: 0,
+          targets: 0,
+          successfulTargets: 0,
+          failedTargets: 0,
+          cancelledTargets: 0,
+          pendingTargets: 0,
+        };
+        stats.posts += 1;
+        stats.targets += row.targets.length;
+        let rowSuccessfulTargets = 0;
+        row.targets.forEach((target) => {
+          const result = row.results?.find((item) => targetKey(item.target) === targetKey(target));
+          const state = publishResultPerformance(result);
+          if (state === 'success') {
+            stats.successfulTargets += 1;
+            rowSuccessfulTargets += 1;
+          } else if (state === 'failed') {
+            stats.failedTargets += 1;
+          } else if (state === 'cancelled') {
+            stats.cancelledTargets += 1;
+          } else {
+            stats.pendingTargets += 1;
+          }
+        });
+        if (rowSuccessfulTargets > 0 || /^(đã đăng|hoàn tất)/i.test(row.status.trim())) stats.completedPosts += 1;
+        statsByPublisher.set(key, stats);
+      });
+      const publisherStats = [...statsByPublisher.values()].sort((left, right) => left.name.localeCompare(right.name, 'vi'));
+      const totals = publisherStats.reduce((sum, item) => ({
+        posts: sum.posts + item.posts,
+        completedPosts: sum.completedPosts + item.completedPosts,
+        targets: sum.targets + item.targets,
+        successfulTargets: sum.successfulTargets + item.successfulTargets,
+        failedTargets: sum.failedTargets + item.failedTargets,
+        cancelledTargets: sum.cancelledTargets + item.cancelledTargets,
+        pendingTargets: sum.pendingTargets + item.pendingTargets,
+      }), {
+        posts: 0,
+        completedPosts: 0,
+        targets: 0,
+        successfulTargets: 0,
+        failedTargets: 0,
+        cancelledTargets: 0,
+        pendingTargets: 0,
+      });
+      const performanceSheet: SheetData = [
+        [
+          header('Người đăng'),
+          header('Tổng bài'),
+          header('Bài hoàn tất'),
+          header('Tổng nơi đăng'),
+          header('Nơi thành công'),
+          header('Nơi lỗi'),
+          header('Nơi đã hủy'),
+          header('Nơi đang chờ'),
+          header('Tỷ lệ thành công'),
+        ],
+        ...publisherStats.map((item) => [
+          textCell(item.name),
+          numberCell(item.posts),
+          numberCell(item.completedPosts),
+          numberCell(item.targets),
+          numberCell(item.successfulTargets, '#DCFCE7'),
+          numberCell(item.failedTargets, '#FEE2E2'),
+          numberCell(item.cancelledTargets, '#FEF3C7'),
+          numberCell(item.pendingTargets),
+          percentageCell(item.targets ? item.successfulTargets / item.targets : 0),
+        ]),
+        [
+          { ...textCell('TỔNG'), fontWeight: 'bold' as const, backgroundColor: '#DBEAFE' },
+          numberCell(totals.posts, '#DBEAFE'),
+          numberCell(totals.completedPosts, '#DBEAFE'),
+          numberCell(totals.targets, '#DBEAFE'),
+          numberCell(totals.successfulTargets, '#DCFCE7'),
+          numberCell(totals.failedTargets, '#FEE2E2'),
+          numberCell(totals.cancelledTargets, '#FEF3C7'),
+          numberCell(totals.pendingTargets, '#DBEAFE'),
+          percentageCell(totals.targets ? totals.successfulTargets / totals.targets : 0),
+        ],
+      ];
+
+      await writeXlsxFile([
+        {
+          sheet: 'Lịch sử đăng bài',
+          data: historySheet,
+          columns: [
+            { width: 7 }, { width: 21 }, { width: 24 }, { width: 32 }, { width: 55 },
+            { width: 30 }, { width: 21 }, { width: 42 }, { width: 28 }, { width: 60 },
+          ],
+          stickyRowsCount: 1,
+          orientation: 'landscape' as const,
+          showGridLines: false,
+        },
+        {
+          sheet: 'Hiệu suất Sale',
+          data: performanceSheet,
+          columns: [
+            { width: 28 }, { width: 14 }, { width: 16 }, { width: 18 }, { width: 18 },
+            { width: 14 }, { width: 16 }, { width: 16 }, { width: 20 },
+          ],
+          stickyRowsCount: 1,
+          orientation: 'landscape' as const,
+          showGridLines: false,
+        },
+      ], {
+        fontFamily: 'Arial',
+        fontSize: 11,
+      }).toFile(`lich-su-dang-bai_${historyFromDate || 'tat-ca'}_${historyToDate || 'tat-ca'}.xlsx`);
+    } catch (error) {
+      setHistoryExportError(error instanceof Error ? error.message : 'Không xuất được file Excel');
+    } finally {
+      setHistoryExporting(false);
+    }
+  }
+
   function appendHistory(row: Omit<HistoryRow, 'id' | 'createdAt'>) {
     setHistory((prev) => [{
       ...row,
+      publisherName: row.publisherName || staffName || 'Không xác định',
       id: `local-${Date.now()}-${Math.random().toString(16).slice(2)}`,
       createdAt: new Date().toISOString(),
     }, ...prev].slice(0, 80));
@@ -1123,7 +1396,57 @@ export function MarketingPipelinePanel({
       </div>
 
       <div className="seeding-history">
-        <div className="seeding-section-title">📋 Lịch sử đăng bài</div>
+        <div className="seeding-history-head">
+          <div className="seeding-section-title">📋 Lịch sử đăng bài</div>
+          <div className="history-actions seeding-history-actions">
+            <label className="history-date-field">
+              <span>Từ ngày</span>
+              <input
+                type="date"
+                value={historyFromDate}
+                max={historyToDate || undefined}
+                onChange={(event) => setHistoryFromDate(event.target.value)}
+              />
+            </label>
+            <label className="history-date-field">
+              <span>Đến ngày</span>
+              <input
+                type="date"
+                value={historyToDate}
+                min={historyFromDate || undefined}
+                onChange={(event) => setHistoryToDate(event.target.value)}
+              />
+            </label>
+            {historyFromDate || historyToDate ? (
+              <button
+                type="button"
+                className="table-icon-button history-clear-button"
+                title="Xóa bộ lọc ngày"
+                onClick={() => {
+                  setHistoryFromDate('');
+                  setHistoryToDate('');
+                  setHistoryExportError('');
+                }}
+              >
+                <X size={17} aria-hidden="true" />
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="history-export-button"
+              disabled={invalidHistoryRange || !filteredHistory.length || historyExporting}
+              onClick={() => void exportPostHistoryExcel()}
+            >
+              <Download size={17} aria-hidden="true" />
+              <span>{historyExporting ? 'Đang xuất...' : 'Xuất Excel'}</span>
+            </button>
+          </div>
+        </div>
+        <div className={`history-filter-meta${invalidHistoryRange ? ' error' : ''}`}>
+          {invalidHistoryRange
+            ? 'Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.'
+            : `Hiển thị ${filteredHistory.length}/${visibleHistory.length} bài đăng${historyFromDate || historyToDate ? ' trong khoảng đã chọn' : ''}.`}
+        </div>
         <div className="data-table-wrap">
           <table className="data-table seeding-history-table">
             <thead>
@@ -1133,11 +1456,12 @@ export function MarketingPipelinePanel({
                 <th>Link ảnh/video</th>
                 <th>Lịch đăng</th>
                 <th>Nơi đăng</th>
+                <th>Người đăng</th>
                 <th>Trạng thái</th>
               </tr>
             </thead>
             <tbody>
-              {visibleHistory.length ? visibleHistory.map((row) => (
+              {filteredHistory.length ? filteredHistory.map((row) => (
                 <tr key={row.id}>
                   <td>
                     <b>{row.title || 'Bài đăng'}</b>
@@ -1151,6 +1475,7 @@ export function MarketingPipelinePanel({
                   </td>
                   <td>{formatDateTime(row.scheduledAt)}</td>
                   <td>{row.targets.length ? row.targets.map((target) => target.name).join(', ') : '-'}</td>
+                  <td>{row.publisherName || 'Không xác định'}</td>
                   <td>
                     <span className={historyPillClass(row.status)}>
                       {displayPostStatus(row.status)}
@@ -1177,7 +1502,9 @@ export function MarketingPipelinePanel({
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan={6} className="table-empty">Chưa có bài đăng nào</td>
+                  <td colSpan={7} className="table-empty">
+                    {visibleHistory.length ? 'Không có bài đăng trong khoảng ngày đã chọn' : 'Chưa có bài đăng nào'}
+                  </td>
                 </tr>
               )}
             </tbody>
@@ -1186,6 +1513,7 @@ export function MarketingPipelinePanel({
       </div>
 
       <div className="seeding-status-line">{localStatus || status}</div>
+      {historyExportError ? <div className="module-status history-export-error">{historyExportError}</div> : null}
     </section>
   );
 }

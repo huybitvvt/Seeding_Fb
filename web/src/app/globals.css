@@ -3095,6 +3095,14 @@ button, input, select, textarea { font-family: inherit; }
   display: grid;
   gap: 12px;
 }
+.seeding-history-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.seeding-history-actions { margin-left: auto; }
 .seeding-history-table td { vertical-align: top; }
 .seeding-history-table td:nth-child(2) {
   max-width: 460px;
@@ -3154,6 +3162,8 @@ button, input, select, textarea { font-family: inherit; }
   .seeding-compose-card,
   .seeding-target-card,
   .seeding-history { padding: 13px; border-radius: 14px; }
+  .seeding-history-head { align-items: stretch; flex-direction: column; }
+  .seeding-history-actions { margin-left: 0; justify-content: stretch; }
 }
 
 .badge-lead { background: #ecfdf5; color: #047857; cursor: default; }

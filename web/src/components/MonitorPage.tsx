@@ -3053,6 +3053,7 @@ export function MonitorPage() {
               initialPages={facebookPageChannels
                 .map((item) => ({ id: item.target_id || '', name: item.channel_name || item.target_id || '' }))
                 .filter((item) => item.id)}
+              staffName={currentStaff?.name || currentStaff?.username || ''}
             />
           ) : null}
           {activeView === 'staff' ? (

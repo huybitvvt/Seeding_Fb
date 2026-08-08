@@ -181,8 +181,9 @@ export type ContentPipelinePost = {
   scheduled_targets?: { type?: 'group' | 'page' | string; id?: string; name?: string }[];
   scheduled_target_index?: number;
   publish_interval_minutes?: number;
-  publish_results?: { ok?: boolean; type?: string; id?: string; name?: string; post_id?: string; error?: string }[];
+  publish_results?: { ok?: boolean; type?: string; id?: string; name?: string; post_id?: string; error?: string; delivery?: string }[];
   published_at?: string;
+  created_by_staff_id?: string;
   created_by_staff_name?: string;
   created_at?: string;
   updated_at?: string;
