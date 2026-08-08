@@ -24,6 +24,8 @@
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+  const captionTextMatches = globalThis.STREALFacebookCaptionMatcher?.textMatches
+    || ((actual, expected) => normalize(actual) === normalize(expected));
 
   function isVisible(node) {
     if (!(node instanceof Element)) return false;
@@ -111,7 +113,7 @@
     return scored[0]?.dialog || null;
   }
 
-  function findComposerEditor(dialog) {
+  function findComposerEditors(dialog) {
     if (!dialog || composerDialogScore(dialog) < 100) return null;
     const candidates = Array.from(dialog.querySelectorAll('[contenteditable="true"][role="textbox"], [contenteditable="true"]'))
       .filter((node) => isVisible(node) && !isCommentControl(node))
@@ -126,7 +128,17 @@
       })
       .filter((item) => item.score >= 0)
       .sort((a, b) => b.score - a.score);
-    return candidates[0]?.node || null;
+    return candidates.map((item) => item.node);
+  }
+
+  function findComposerEditor(dialog) {
+    return findComposerEditors(dialog)?.[0] || null;
+  }
+
+  function findComposerEditorContainingMessage(dialog, message) {
+    const candidates = [state.editor, ...(findComposerEditors(dialog) || [])]
+      .filter((node, index, items) => node?.isConnected && isVisible(node) && items.indexOf(node) === index);
+    return candidates.find((node) => editorContainsMessage(node, message)) || null;
   }
 
   function findComposerTrigger() {
@@ -159,12 +171,7 @@
   }
 
   function editorContainsMessage(editor, message) {
-    const actual = normalize(editor?.innerText || editor?.textContent);
-    const expected = normalize(message);
-    if (!actual || !expected) return false;
-    if (actual === expected) return true;
-    const firstMatch = actual.indexOf(expected);
-    return firstMatch >= 0 && firstMatch === actual.lastIndexOf(expected);
+    return captionTextMatches(editor?.innerText || editor?.textContent, message);
   }
 
   function selectEditorContents(editor) {
@@ -617,8 +624,8 @@
       const dialog = state.dialog?.isConnected && composerDialogScore(state.dialog) >= 100
         ? state.dialog
         : findComposerDialog();
-      const editor = findComposerEditor(dialog);
-      const captionReady = editorContainsMessage(editor, state.message);
+      const editor = findComposerEditorContainingMessage(dialog, state.message);
+      const captionReady = Boolean(editor);
       const previewReady = !mediaState.attachedCount
         || mediaState.previewDetected
         || hasMediaPreview(dialog, mediaState.mediaNodeCountBefore);
@@ -629,6 +636,7 @@
       else if (!match) lastReason = 'Nút Đăng chưa xuất hiện hoặc vẫn đang bị vô hiệu hóa.';
 
       if (captionReady && previewReady && match) {
+        state.editor = editor;
         stableReadyChecks += 1;
         if (stableReadyChecks >= 2) {
           if (!beginPostSubmission(match, true)) return;
