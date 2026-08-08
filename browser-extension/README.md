@@ -21,7 +21,7 @@ Khi source có thay đổi extension:
 
 1. Mở `chrome://extensions`.
 2. Bấm nút reload trên `Seeding Fsolution Bridge` hoặc bấm `Update`.
-3. Đảm bảo version hiện tại là `0.1.30` trở lên.
+3. Đảm bảo version hiện tại là `0.1.31` trở lên.
 4. Tải lại web Seeding Fsolution trước khi test lại `TikTok CMT`.
 
 ## Lưu ý vận hành
@@ -33,6 +33,7 @@ Khi source có thay đổi extension:
 - Facebook cookie chỉ được lấy khi admin bấm nút, không tự động thu thập nền.
 - Chế độ Facebook Group/Page tự bấm nút `Đăng` sau khi xác nhận caption, media preview và nút đăng đều sẵn sàng; extension chỉ chuyển sang nơi tiếp theo khi Facebook đã đóng hộp soạn bài.
 - Bản 0.1.30 tự bỏ hàng đợi bị kẹt khi tab Facebook cũ đã đóng. Nếu hàng đợi cũ vẫn còn hoạt động, lần đăng mới sẽ hiện nút `Hủy hàng đợi cũ` để người dùng chủ động dừng rồi thử lại.
+- Bản 0.1.31 bỏ qua an toàn bridge cũ bị Chrome vô hiệu hóa khi reload tiện ích, tránh ghi lỗi `Extension context invalidated`; sau khi reload extension vẫn cần tải lại các tab Sale F-Solution/Facebook đang mở.
 - Caption và file ảnh/video công khai đã upload trên màn `Bài viết` được điền/chọn tự động. Extension chỉ thao tác trong dialog `Tạo bài viết`, không dùng ô bình luận làm phương án dự phòng, ưu tiên paste tương thích Facebook Lexical và không chèn lại caption khi nhận retry. Bản 0.1.29 tự bấm `Đăng` sau khi xác nhận caption, preview media và nút đăng đều sẵn sàng, rồi chuyển sang nơi tiếp theo sau khi dialog đóng. Nút `Hủy hàng đợi` trên lịch sử sẽ dừng các nơi chưa xử lý. Extension sẽ dừng và báo lỗi nếu Facebook chặn, không xác nhận, hoặc không tải/gắn được media.
 - Link YouTube/TikTok hoặc URL không trỏ trực tiếp tới file media được chèn vào caption để Facebook tạo link preview, không được tải thành file.
 - Nếu TikTok hỏi đăng nhập lại, hãy đăng nhập trực tiếp trên tab TikTok rồi bấm gửi lại.
