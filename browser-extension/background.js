@@ -795,6 +795,22 @@ function storageRemove(key) {
   return new Promise((resolve) => chrome.storage.local.remove([key], resolve));
 }
 
+function tabExists(tabId) {
+  return new Promise((resolve) => {
+    if (!tabId) {
+      resolve(false);
+      return;
+    }
+    chrome.tabs.get(tabId, (tab) => {
+      if (chrome.runtime.lastError) {
+        resolve(false);
+        return;
+      }
+      resolve(Boolean(tab?.id));
+    });
+  });
+}
+
 function sendTabMessage(tabId, message) {
   return new Promise((resolve) => {
     if (!tabId) {
@@ -959,14 +975,22 @@ async function startFacebookGroupQueue(request, sender) {
   const existingAgeMs = existing?.createdAt
     ? Math.max(0, Date.now() - new Date(existing.createdAt).getTime())
     : Number.POSITIVE_INFINITY;
+  const existingFacebookTabAlive = existingIsActive
+    ? await tabExists(existing.facebookTabId)
+    : false;
   // A queue left at `ready` means an older extension prepared Facebook but the
   // user closed the composer or reloaded the web app before confirmation. A new
   // queue explicitly replaces that abandoned attempt. Any active queue is also
   // safe to replace after a long extension/browser interruption.
   const canReplaceExisting = existingIsActive
-    && (existing.status === 'ready' || existingAgeMs > 10 * 60 * 1000);
+    && (existing.status === 'ready' || !existingFacebookTabAlive || existingAgeMs > 10 * 60 * 1000);
   if (existingIsActive && !canReplaceExisting) {
-    return { ok: false, error: 'Dang co mot hang doi Facebook chua hoan thanh.' };
+    return {
+      ok: false,
+      error: 'Dang co mot hang doi Facebook chua hoan thanh.',
+      activeRequestId: String(existing.requestId || ''),
+      activeStatus: String(existing.status || ''),
+    };
   }
 
   const queue = {

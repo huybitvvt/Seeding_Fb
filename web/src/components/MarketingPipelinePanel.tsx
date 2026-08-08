@@ -42,6 +42,7 @@ type PostMediaItem = { url: string; type?: 'image' | 'video'; name?: string };
 
 type HistoryRow = {
   id: string;
+  queueRequestId?: string;
   title: string;
   content: string;
   mediaUrl: string;
@@ -194,6 +195,7 @@ function historyPillClass(status: string) {
 function canCancelFacebookQueue(row: HistoryRow) {
   if (!row.id.startsWith('chrome-')) return false;
   const status = row.status.trim().toLowerCase();
+  if (row.queueRequestId && status.startsWith('lỗi khởi động')) return true;
   return [
     'đang khởi tạo',
     'đang chuẩn bị',
@@ -609,7 +611,7 @@ export function MarketingPipelinePanel({
     const response = await new Promise<Record<string, any>>((resolve) => {
       const timer = window.setTimeout(() => {
         window.removeEventListener('message', handleResponse);
-        resolve({ ok: false, error: 'Không thấy extension phản hồi. Hãy cập nhật Seeding Fsolution Bridge lên 0.1.29 và tải lại trang.' });
+        resolve({ ok: false, error: 'Không thấy extension phản hồi. Hãy cập nhật Seeding Fsolution Bridge lên 0.1.30 và tải lại trang.' });
       }, 6000);
       function handleResponse(event: MessageEvent) {
         if (event.source !== window) return;
@@ -640,8 +642,13 @@ export function MarketingPipelinePanel({
 
     if (!response.ok) {
       setHistory((prev) => prev.map((row) => row.id === historyId
-        ? { ...row, status: `Lỗi khởi động: ${response.error || 'extension không phản hồi'}` }
+        ? {
+            ...row,
+            queueRequestId: String(response.activeRequestId || ''),
+            status: `Lỗi khởi động: ${response.error || 'extension không phản hồi'}`,
+          }
         : row));
+      assistedQueueRequestRef.current = '';
       setAssistedQueueBusy(false);
       setLocalStatus(`Không khởi động được đăng qua Chrome: ${response.error || 'extension không phản hồi'}`);
       return;
@@ -653,7 +660,8 @@ export function MarketingPipelinePanel({
   }
 
   async function cancelAssistedGroupQueue(row: HistoryRow) {
-    const requestId = row.id.startsWith('chrome-') ? row.id.slice('chrome-'.length) : '';
+    const requestId = row.queueRequestId
+      || (row.id.startsWith('chrome-') ? row.id.slice('chrome-'.length) : '');
     if (!requestId || cancellingHistoryIds[row.id]) return;
     if (!window.confirm('Hủy hàng đợi này? Các Group/Page chưa xử lý sẽ không được mở tiếp.')) return;
 
@@ -663,7 +671,7 @@ export function MarketingPipelinePanel({
       const response = await new Promise<Record<string, any>>((resolve) => {
         const timer = window.setTimeout(() => {
           window.removeEventListener('message', handleResponse);
-          resolve({ ok: false, error: 'Không thấy extension phản hồi. Hãy cập nhật Seeding Fsolution Bridge lên 0.1.29 và tải lại trang.' });
+          resolve({ ok: false, error: 'Không thấy extension phản hồi. Hãy cập nhật Seeding Fsolution Bridge lên 0.1.30 và tải lại trang.' });
         }, 6000);
         function handleResponse(event: MessageEvent) {
           if (event.source !== window) return;
@@ -1505,7 +1513,9 @@ export function MarketingPipelinePanel({
                         disabled={!!cancellingHistoryIds[row.id]}
                         onClick={() => void cancelAssistedGroupQueue(row)}
                       >
-                        {cancellingHistoryIds[row.id] ? 'Đang hủy...' : 'Hủy hàng đợi'}
+                        {cancellingHistoryIds[row.id]
+                          ? 'Đang hủy...'
+                          : row.queueRequestId ? 'Hủy hàng đợi cũ' : 'Hủy hàng đợi'}
                       </button>
                     ) : null}
                   </td>
