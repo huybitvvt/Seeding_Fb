@@ -1,8 +1,6 @@
 import os
 import json
 import re
-import threading
-import time
 import requests
 from requests.exceptions import RequestException
 from typing import Optional, List, Dict
@@ -66,20 +64,15 @@ def load_cookie(cookie: str = None) -> Optional[str]:
 
 
 _live_api_instances = []
-_token_refresh_lock = threading.Lock()
 
 
-def refresh_token(cookie: str = None, token_file: str = None, stale_token: str = None) -> Optional[str]:
+def refresh_token(cookie: str = None, token_file: str = None) -> Optional[str]:
     cookie = load_cookie(cookie)
     if not cookie:
         print('Khong tim thay cookie.txt — can cap nhat cookie thu cong')
         return None
-    with _token_refresh_lock:
-        cached = load_token(token_file)
-        if cached and (not stale_token or cached != stale_token):
-            return cached
-        print('Token het han, dang lay token moi tu cookie...')
-        return FacebookTokenGenerator(FB_CLIENT_ID, cookie, token_file).GetToken()
+    print('Token het han, dang lay token moi tu cookie...')
+    return FacebookTokenGenerator(FB_CLIENT_ID, cookie, token_file).GetToken()
 
 
 def friendly_graph_error(exc: Exception) -> str:
@@ -114,7 +107,7 @@ class FacebookGroupAPI:
                 inst.access_token = token
 
     def _refresh_access_token(self) -> bool:
-        new_token = refresh_token(self.cookie, self.token_file, stale_token=self.access_token)
+        new_token = refresh_token(self.cookie, self.token_file)
         if not new_token:
             print('Khong the refresh token - kiem tra lai cookie')
             return False
@@ -123,21 +116,6 @@ class FacebookGroupAPI:
 
     def _is_expired(self, data: dict) -> bool:
         return data.get('error', {}).get('code') == 190
-
-    def _should_refresh_access_token(self, data: dict) -> bool:
-        # Facebook sometimes returns #368 for a token generated from an older
-        # cookie instead of the usual #190 expired-token response.
-        return (data.get('error') or {}).get('code') in (190, 368)
-
-    def _remember_graph_error(self, data: dict) -> None:
-        error = data.get('error') or {}
-        message = str(error.get('message') or '').strip()
-        code = error.get('code')
-        if message:
-            self.last_graph_error = f'{message} (Facebook #{code})' if code else message
-
-    def _is_transient_error(self, data: dict) -> bool:
-        return (data.get('error') or {}).get('code') in (1, 2, 4, 17, 32, 341, 613)
 
     def _call(self, method: str, url: str, **kwargs) -> Optional[dict]:
         self.last_graph_error = ''
@@ -149,30 +127,16 @@ class FacebookGroupAPI:
                 data = resp.json()
             except RequestException as exc:
                 self.last_graph_error = friendly_graph_error(exc)
-                if attempt == 0:
-                    time.sleep(0.4)
-                    continue
                 return None
             except ValueError:
                 self.last_graph_error = 'Facebook trả về dữ liệu không hợp lệ.'
-                if attempt == 0:
-                    time.sleep(0.4)
-                    continue
                 return None
-            if self._should_refresh_access_token(data):
+            if self._is_expired(data):
                 if attempt == 0 and self._refresh_access_token():
                     continue
-                if self._is_expired(data):
-                    print('Khong the refresh token - kiem tra lai cookie')
-                    self.last_graph_error = 'Cookie/token Facebook hết hạn hoặc không hợp lệ.'
-                else:
-                    self._remember_graph_error(data)
+                print('Khong the refresh token - kiem tra lai cookie')
+                self.last_graph_error = 'Cookie/token Facebook hết hạn hoặc không hợp lệ.'
                 return None
-            if data.get('error'):
-                self._remember_graph_error(data)
-                if attempt == 0 and self._is_transient_error(data):
-                    time.sleep(0.6)
-                    continue
             return data
         return None
 
@@ -336,8 +300,7 @@ class FacebookGroupAPI:
 
     def get_page_posts(self, page_id: str, page_token: str, limit: int = 10) -> Optional[List[Dict]]:
         token = page_token or self.access_token
-        data = self._call(
-            'get',
+        resp = requests.get(
             f'{GRAPH_URL}/{page_id}/posts',
             params={
                 'access_token': token,
@@ -346,7 +309,8 @@ class FacebookGroupAPI:
             },
             timeout=30,
         )
-        if not data or data.get('error'):
+        data = resp.json()
+        if data.get('error'):
             return None
         return data.get('data') or []
 
@@ -385,7 +349,7 @@ class FacebookGroupAPI:
             resp = requests.get(f'{GRAPH_URL}/{_post_object_id(post_id)}/comments', params=dict(params), timeout=30)
             data = resp.json()
         if data and self._is_expired(data) and not access_token:
-            new_token = refresh_token(self.cookie, self.token_file, stale_token=self.access_token)
+            new_token = refresh_token(self.cookie, self.token_file)
             if new_token:
                 self.access_token = new_token
                 params['access_token'] = self.access_token
@@ -410,7 +374,7 @@ class FacebookGroupAPI:
                 data = resp.json()
                 if self._is_expired(data):
                     import re
-                    new_token = refresh_token(self.cookie, self.token_file, stale_token=self.access_token)
+                    new_token = refresh_token(self.cookie, self.token_file)
                     if not new_token:
                         break
                     self.access_token = new_token
@@ -446,7 +410,7 @@ class FacebookGroupAPI:
             if data and not data.get('error'):
                 break
         if data and self._is_expired(data) and not access_token:
-            new_token = refresh_token(self.cookie, self.token_file, stale_token=self.access_token)
+            new_token = refresh_token(self.cookie, self.token_file)
             if new_token:
                 self.access_token = new_token
                 params['access_token'] = self.access_token

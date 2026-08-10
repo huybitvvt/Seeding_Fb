@@ -1,10 +1,9 @@
 'use client';
 
-import { ChevronRight, PanelLeftClose } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { CONSOLE_MODULE_ICONS } from '@/lib/console-nav-icons';
 import { CONSOLE_NAV_ITEMS } from '@/lib/console-nav';
 import type { ViewKey } from '@/lib/app-routes';
-import { APP_BRAND } from '@/lib/app-brand';
 
 type ConsoleRailProps = {
   activeView: ViewKey;
@@ -17,23 +16,11 @@ export function ConsoleRail({ activeView, onNavigate, collapsed = false, onToggl
   return (
     <aside className={`console-rail${collapsed ? ' collapsed' : ''}`}>
       <div className="console-rail-brand">
-        <img className="console-logo" src="/LOGO4_XOANEN.png" alt={APP_BRAND.name} />
+        <img className="console-logo" src="/st-real-logo.jpg" alt="Seeding Fsolution" />
         <div className="console-rail-title">
-          <b>{APP_BRAND.railPrimary}</b>
-          <span>{APP_BRAND.railSecondary}</span>
+          <b>Seeding</b>
+          <span>Fsolution</span>
         </div>
-        {onToggleCollapse ? (
-          <button
-            type="button"
-            className="rail-collapse-top"
-            title={collapsed ? 'Mở rộng menu' : 'Thu gọn menu'}
-            aria-label={collapsed ? 'Mở rộng menu' : 'Thu gọn menu'}
-            aria-expanded={!collapsed}
-            onClick={onToggleCollapse}
-          >
-            {collapsed ? <ChevronRight /> : <PanelLeftClose />}
-          </button>
-        ) : null}
       </div>
 
       <nav className="console-rail-nav" aria-label="Điều hướng chính">
@@ -58,6 +45,19 @@ export function ConsoleRail({ activeView, onNavigate, collapsed = false, onToggl
           );
         })}
       </nav>
+
+      {onToggleCollapse ? (
+        <button
+          type="button"
+          className="rail-toggle"
+          title={collapsed ? 'Mở rộng menu' : 'Thu gọn menu'}
+          aria-expanded={!collapsed}
+          onClick={onToggleCollapse}
+        >
+          {collapsed ? <ChevronRight /> : <ChevronLeft />}
+          {!collapsed ? <span>Thu gọn</span> : null}
+        </button>
+      ) : null}
     </aside>
   );
 }

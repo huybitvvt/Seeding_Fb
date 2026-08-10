@@ -3,7 +3,6 @@
 import { CONSOLE_MODULE_ICONS } from '@/lib/console-nav-icons';
 import { CONSOLE_NAV_ITEMS } from '@/lib/console-nav';
 import type { ViewKey } from '@/lib/app-routes';
-import { APP_BRAND } from '@/lib/app-brand';
 
 const MODULE_DESCS: Partial<Record<ViewKey, string>> = {
   staff: 'Quản lý tài khoản sale và quyền thao tác.',
@@ -24,7 +23,7 @@ export function ConsoleHome({ staffName, onOpen }: { staffName?: string; onOpen:
     <section className="home-view">
       <div className="home-title">
         <h1>Chào buổi tối, {staffName || 'Admin'} 👋</h1>
-        <p>{APP_BRAND.homeDescription}</p>
+        <p>Chọn module để vận hành hệ thống social console.</p>
       </div>
       <div className="home-tabs">
         <button className="active" type="button">

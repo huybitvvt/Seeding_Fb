@@ -6,17 +6,10 @@
     window.postMessage({ ...payload, source: EXTENSION_SOURCE }, window.location.origin);
   }
 
-  chrome.runtime.onMessage.addListener((message) => {
-    if (message?.type !== 'STREAL_FACEBOOK_GROUP_QUEUE_PROGRESS') return false;
-    postToPage(message);
-    return false;
-  });
-
   window.addEventListener('message', (event) => {
-    try {
-      if (event.source !== window) return;
-      const data = event.data || {};
-      if (data.source !== SOURCE) return;
+    if (event.source !== window) return;
+    const data = event.data || {};
+    if (data.source !== SOURCE) return;
 
     if (data.type === 'STREAL_TIKTOK_BRIDGE_PING') {
       postToPage({
@@ -47,59 +40,6 @@
             type: 'STREAL_FACEBOOK_COOKIE_RESPONSE',
             requestId: data.requestId,
             ...(response || { ok: false, error: 'Extension khong tra cookie' }),
-          });
-        },
-      );
-      return;
-    }
-
-    if (data.type === 'STREAL_FACEBOOK_GROUP_QUEUE_REQUEST') {
-      chrome.runtime.sendMessage(
-        {
-          type: 'STREAL_EXTENSION_START_FACEBOOK_GROUP_QUEUE',
-          requestId: data.requestId,
-          payload: data.payload || {},
-        },
-        (response) => {
-          if (chrome.runtime.lastError) {
-            postToPage({
-              type: 'STREAL_FACEBOOK_GROUP_QUEUE_RESPONSE',
-              requestId: data.requestId,
-              ok: false,
-              error: chrome.runtime.lastError.message || 'Extension khong phan hoi',
-            });
-            return;
-          }
-          postToPage({
-            type: 'STREAL_FACEBOOK_GROUP_QUEUE_RESPONSE',
-            requestId: data.requestId,
-            ...(response || { ok: false, error: 'Extension khong khoi dong duoc hang doi Facebook' }),
-          });
-        },
-      );
-      return;
-    }
-
-    if (data.type === 'STREAL_FACEBOOK_GROUP_QUEUE_CANCEL_REQUEST') {
-      chrome.runtime.sendMessage(
-        {
-          type: 'STREAL_EXTENSION_CANCEL_FACEBOOK_GROUP_QUEUE',
-          requestId: data.requestId,
-        },
-        (response) => {
-          if (chrome.runtime.lastError) {
-            postToPage({
-              type: 'STREAL_FACEBOOK_GROUP_QUEUE_CANCEL_RESPONSE',
-              requestId: data.requestId,
-              ok: false,
-              error: chrome.runtime.lastError.message || 'Extension khong phan hoi',
-            });
-            return;
-          }
-          postToPage({
-            type: 'STREAL_FACEBOOK_GROUP_QUEUE_CANCEL_RESPONSE',
-            requestId: data.requestId,
-            ...(response || { ok: false, error: 'Extension khong huy duoc hang doi Facebook' }),
           });
         },
       );
@@ -191,34 +131,28 @@
 
     if (data.type !== 'STREAL_TIKTOK_COMMENT_REQUEST') return;
 
-      chrome.runtime.sendMessage(
-        {
-          type: 'STREAL_EXTENSION_SEND_COMMENT',
-          requestId: data.requestId,
-          payload: data.payload || {},
-        },
-        (response) => {
-          if (chrome.runtime.lastError) {
-            postToPage({
-              type: 'STREAL_TIKTOK_COMMENT_RESPONSE',
-              requestId: data.requestId,
-              ok: false,
-              error: chrome.runtime.lastError.message || 'Extension khong phan hoi',
-            });
-            return;
-          }
+    chrome.runtime.sendMessage(
+      {
+        type: 'STREAL_EXTENSION_SEND_COMMENT',
+        requestId: data.requestId,
+        payload: data.payload || {},
+      },
+      (response) => {
+        if (chrome.runtime.lastError) {
           postToPage({
             type: 'STREAL_TIKTOK_COMMENT_RESPONSE',
             requestId: data.requestId,
-            ...(response || { ok: false, error: 'Extension khong tra ket qua' }),
+            ok: false,
+            error: chrome.runtime.lastError.message || 'Extension khong phan hoi',
           });
-        },
-      );
-    } catch (error) {
-      // Reloading an unpacked extension invalidates content scripts already
-      // injected into open tabs. Ignore that stale bridge until the tab reloads.
-      if (/extension context invalidated/i.test(String(error?.message || error))) return;
-      throw error;
-    }
+          return;
+        }
+        postToPage({
+          type: 'STREAL_TIKTOK_COMMENT_RESPONSE',
+          requestId: data.requestId,
+          ...(response || { ok: false, error: 'Extension khong tra ket qua' }),
+        });
+      },
+    );
   });
 })();

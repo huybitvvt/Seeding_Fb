@@ -16,7 +16,7 @@ from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 from xml.etree import ElementTree as ET
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request, session, copy_current_request_context, has_request_context, g
+from flask import Flask, jsonify, render_template, request, session, copy_current_request_context, has_request_context
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
@@ -102,20 +102,9 @@ PORT = int(os.environ.get('PORT', 5000))
 SCHEDULED_POST_WORKER_INTERVAL_SECONDS = int(os.environ.get('SCHEDULED_POST_WORKER_INTERVAL_SECONDS', '30') or '30')
 WEB_UI_URL = (os.environ.get('WEB_UI_URL') or 'http://localhost:3000').rstrip('/')
 USE_LEGACY_UI = os.environ.get('USE_LEGACY_UI', '').lower() in ('1', 'true', 'yes')
-
-
-def _normalize_supabase_url(value: str) -> str:
-    url = (value or '').strip().rstrip('/')
-    for suffix in ('/rest/v1', '/storage/v1'):
-        if url.endswith(suffix):
-            return url[: -len(suffix)].rstrip('/')
-    return url
-
-
-SUPABASE_URL = _normalize_supabase_url(os.environ.get('SUPABASE_URL') or os.environ.get('VITE_SUPABASE_URL') or '')
+SUPABASE_URL = os.environ.get('SUPABASE_URL') or os.environ.get('VITE_SUPABASE_URL', '')
 SUPABASE_KEY = (
     os.environ.get('SUPABASE_SERVICE_ROLE_KEY')
-    or os.environ.get('SUPABASE_ANON_KEY')
     or os.environ.get('SUPABASE_PUBLISHABLE_KEY')
     or os.environ.get('VITE_SUPABASE_PUBLISHABLE_KEY', '')
 )
@@ -134,27 +123,6 @@ SUPABASE_CONTENT_SCRIPT_BLOCK_TABLE = os.environ.get('SUPABASE_CONTENT_SCRIPT_BL
 SUPABASE_COMMENT_IMAGE_BUCKET = os.environ.get('SUPABASE_COMMENT_IMAGE_BUCKET', 'comment-images')
 SUPABASE_POST_MEDIA_BUCKET = os.environ.get('SUPABASE_POST_MEDIA_BUCKET', SUPABASE_COMMENT_IMAGE_BUCKET)
 APP_TIMEZONE = os.environ.get('APP_TIMEZONE', 'Asia/Ho_Chi_Minh')
-
-_SOURCE_SUPABASE_PROJECT_REF = urlsplit((SUPABASE_URL or '').rstrip('/')).netloc.split('.')[0]
-_SALE_FLOW_TARGET = (
-    'https://kkwiyaczifckvnnxcjko.supabase.co',
-    'sb_publishable_-xhiMVuiGjqeV5mrlBNXaQ_eBm-5HLH',
-)
-FLOW_SUPABASE_URL = _normalize_supabase_url(os.environ.get('FLOW_SUPABASE_URL') or '')
-FLOW_SUPABASE_KEY = (
-    os.environ.get('FLOW_SUPABASE_SERVICE_ROLE_KEY')
-    or os.environ.get('FLOW_SUPABASE_PUBLISHABLE_KEY')
-    or ''
-)
-if _SOURCE_SUPABASE_PROJECT_REF == 'rhqzdpymmunfknfqtcwm':
-    FLOW_SUPABASE_URL = FLOW_SUPABASE_URL or _SALE_FLOW_TARGET[0]
-    FLOW_SUPABASE_KEY = FLOW_SUPABASE_KEY or _SALE_FLOW_TARGET[1]
-FLOW_SUPABASE_LEAD_TABLE = os.environ.get('FLOW_SUPABASE_LEAD_TABLE', 'leads')
-FLOW_SUPABASE_STAFF_TABLE = os.environ.get('FLOW_SUPABASE_STAFF_TABLE', 'staff_users')
-FLOW_SUPABASE_USER_TABLE = os.environ.get('FLOW_SUPABASE_USER_TABLE', 'users')
-FLOW_SUPABASE_SYNC_ENABLED = os.environ.get('FLOW_SUPABASE_SYNC_ENABLED', 'true').lower() not in (
-    '0', 'false', 'no', 'off',
-)
 
 
 def _supabase_project_ref() -> str:
@@ -219,8 +187,6 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
     SESSION_COOKIE_SECURE=os.environ.get('FLASK_ENV') == 'production' or bool(os.environ.get('RENDER')),
-    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
-    SESSION_REFRESH_EACH_REQUEST=True,
 )
 
 _cors_origins = [
@@ -356,59 +322,11 @@ def _default_content_studio_setup() -> dict:
 def _default_content_techniques() -> list[dict]:
     return [
         {
-            'id': 'pas',
-            'name': 'PAS',
-            'content': (
-                'Problem: nêu rõ vấn đề hoặc nỗi đau khách đang gặp. '
-                'Agitate: khuếch đại hậu quả nếu không giải quyết, tạo cảm giác cấp bách. '
-                'Solution: giới thiệu sản phẩm/dịch vụ như giải pháp trực tiếp cho vấn đề đó.'
-            ),
-            'created_at': 'system',
-            'updated_at': 'system',
-            'system': True,
-        },
-        {
             'id': 'aida',
             'name': 'AIDA',
             'content': (
                 'Attention: mở đầu gây chú ý. Interest: nêu lợi ích/vấn đề liên quan. '
                 'Desire: làm rõ mong muốn và lý do nên chọn. Action: kêu gọi hành động cụ thể.'
-            ),
-            'created_at': 'system',
-            'updated_at': 'system',
-            'system': True,
-        },
-        {
-            'id': 'bab',
-            'name': 'BAB',
-            'content': (
-                'Before: mô tả tình trạng hiện tại khó khăn hoặc thiếu sót. '
-                'After: vẽ bức tranh tích cực sau khi giải quyết. '
-                'Bridge: sản phẩm/dịch vụ là cầu nối giúp chuyển từ Before sang After.'
-            ),
-            'created_at': 'system',
-            'updated_at': 'system',
-            'system': True,
-        },
-        {
-            'id': 'storytelling',
-            'name': 'Storytelling',
-            'content': (
-                'Mở bằng tình huống hoặc câu chuyện có nhân vật dễ đồng cảm. '
-                'Đưa vào xung đột/thử thách để tạo kịch tính. '
-                'Kết bằng bài học và liên hệ tự nhiên tới sản phẩm/dịch vụ.'
-            ),
-            'created_at': 'system',
-            'updated_at': 'system',
-            'system': True,
-        },
-        {
-            'id': 'social-proof',
-            'name': 'Social Proof',
-            'content': (
-                'Dùng review, testimonial, số liệu hoặc case study để tăng độ tin cậy. '
-                'Nêu số người/khách hàng đã tin dùng hoặc kết quả đạt được. '
-                'Giảm rủi ro bằng bằng chứng xã hội trước khi kêu gọi hành động.'
             ),
             'created_at': 'system',
             'updated_at': 'system',
@@ -478,46 +396,8 @@ def _verify_password(password: str, salt: str, digest: str) -> bool:
     return secrets.compare_digest(candidate, digest)
 
 
-_SUPABASE_STARTUP_KV_KEYS = [
-    'settings',
-    'ai_config',
-    'tiktok_config',
-    'content_pipeline',
-    'comment_templates',
-    'comment_tags',
-    'comment_tag_assignments',
-    'comment_inbox_workflow',
-    'comment_manual_phones',
-]
-
-
-def _load_supabase_startup_snapshot() -> tuple[dict, dict[str, str]]:
-    jobs = {
-        'kv': lambda: sb.kv_get_many(_SUPABASE_STARTUP_KV_KEYS),
-        'seen_ids': sb.list_seen_post_ids,
-        'chat_ids': sb.list_chat_ids,
-        'groups': sb.list_groups,
-        'classifications': sb.list_classifications,
-        'managed_channels': lambda: sb.list_managed_channels(SUPABASE_CHANNEL_TABLE),
-        'business_profile': _load_business_profile_from_supabase,
-        'staff': _list_supabase_staff,
-    }
-    values: dict = {}
-    errors: dict[str, str] = {}
-    with ThreadPoolExecutor(max_workers=len(jobs)) as executor:
-        pending = {executor.submit(loader): name for name, loader in jobs.items()}
-        for future in as_completed(pending):
-            name = pending[future]
-            try:
-                values[name] = future.result()
-            except Exception as exc:
-                errors[name] = str(exc)[:300]
-    return values, errors
-
-
 def _load_state():
     global _seen_ids, _tg_chat_ids, _groups, _settings, _ai_config, _classifications, _leads, _deleted_lead_keys, _reply_suggestions, _business_profile, _staff_cookies, _comment_logs, _comment_summaries, _post_comments, _managed_channels, _managed_channels_remote_at, _tiktok_config, _content_pipeline, _comment_templates, _comment_tags, _comment_tag_assignments, _comment_inbox_workflow, _comment_manual_phones
-    started_at = time_module.monotonic()
     try:
         os.makedirs(DATA_DIR, exist_ok=True)
     except OSError as e:
@@ -528,54 +408,17 @@ def _load_state():
         print(f'[storage] token dir unavailable, token cache disabled: {e}')
 
     loaded_from_supabase = False
-    startup_snapshot: dict = {}
-    startup_kv: dict = {}
-    startup_kv_loaded = False
     if USE_SUPABASE:
         try:
-            startup_snapshot, startup_errors = _load_supabase_startup_snapshot()
-            for name, error in startup_errors.items():
-                print(f'[supabase] startup {name} failed, using local fallback: {error}')
-            startup_kv_loaded = 'kv' in startup_snapshot
-            startup_kv = startup_snapshot.get('kv') or {}
-            _seen_ids = set(
-                startup_snapshot['seen_ids']
-                if 'seen_ids' in startup_snapshot
-                else _read_json(SEEN_FILE, [])
-            )
-            _tg_chat_ids = (
-                startup_snapshot.get('chat_ids')
-                if 'chat_ids' in startup_snapshot
-                else (_read_json(TG_CONFIG_FILE, {}).get('chat_ids') or [])
-            ) or ['7129448686']
-            _groups = (
-                startup_snapshot.get('groups')
-                if 'groups' in startup_snapshot
-                else _read_json(GROUPS_FILE, [])
-            ) or [{'id': DEFAULT_GROUP, 'name': ''}]
-            _settings = (
-                startup_kv.get('settings')
-                if startup_kv_loaded
-                else _read_json(SETTINGS_FILE, {})
-            ) or {'auto_refresh': True, 'interval': 5}
-            _ai_config = (
-                startup_kv.get('ai_config')
-                if startup_kv_loaded
-                else _read_json(AI_CONFIG_FILE, {})
-            ) or _default_ai_config()
-            loaded_tiktok = (
-                startup_kv.get('tiktok_config')
-                if startup_kv_loaded
-                else _read_json(TIKTOK_CONFIG_FILE, {})
-            ) or {}
-            _tiktok_config = {**_default_tiktok_config(), **loaded_tiktok}
-            _classifications = (
-                startup_snapshot.get('classifications')
-                if 'classifications' in startup_snapshot
-                else _read_json(CLASSIFICATIONS_FILE, {})
-            )
+            _seen_ids = set(sb.list_seen_post_ids())
+            _tg_chat_ids = sb.list_chat_ids() or ['7129448686']
+            _groups = sb.list_groups() or [{'id': DEFAULT_GROUP, 'name': ''}]
+            _settings = sb.kv_get('settings', None) or {'auto_refresh': True, 'interval': 5}
+            _ai_config = sb.kv_get('ai_config', None) or _default_ai_config()
+            _tiktok_config = {**_default_tiktok_config(), **(sb.kv_get('tiktok_config', None) or {})}
+            _classifications = sb.list_classifications()
             try:
-                remote_channels = startup_snapshot.get('managed_channels') or []
+                remote_channels = sb.list_managed_channels(SUPABASE_CHANNEL_TABLE)
                 local_channels = _read_json(MANAGED_CHANNELS_FILE, [])
                 _managed_channels = _merge_managed_channels_remote(remote_channels, local_channels)
                 _managed_channels_remote_at = time_module.monotonic()
@@ -586,15 +429,10 @@ def _load_state():
             _reply_suggestions = _read_json(REPLY_SUGGESTIONS_FILE, {})
             loaded_profile = _read_json(BUSINESS_PROFILE_FILE, {})
             _business_profile = {**_default_business_profile(), **loaded_profile}
-            profile_sb, profile_warning = startup_snapshot.get('business_profile') or (None, '')
-            if profile_warning:
-                print(f'[supabase] load business profile warning: {profile_warning}')
+            profile_sb, _ = _load_business_profile_from_supabase()
             if profile_sb:
                 _business_profile = {**_business_profile, **profile_sb}
-            staff_rows, staff_warning = startup_snapshot.get('staff') or ([], '')
-            if staff_warning:
-                print(f'[supabase] hydrate staff warning: {staff_warning}')
-            print(f'[supabase] startup snapshot loaded in {time_module.monotonic() - started_at:.2f}s')
+            print('[supabase] state loaded from Supabase')
             loaded_from_supabase = True
         except Exception as e:
             print(f'[supabase] load failed, fallback file: {e}')
@@ -632,9 +470,6 @@ def _load_state():
     if changed_staff:
         _save_staff_cookies()
     _hydrate_staff_accounts_from_supabase()
-    # Render may keep the runtime directory between deploys. Never reuse a
-    # token generated by an older process or an older cookie.
-    _clear_all_staff_access_tokens()
 
     _comment_logs = _read_json(COMMENT_LOGS_FILE, [])
     if not isinstance(_comment_logs, list):
@@ -650,9 +485,7 @@ def _load_state():
     if not isinstance(_tiktok_config, dict):
         _tiktok_config = _default_tiktok_config()
     loaded_pipeline = _read_json(CONTENT_PIPELINE_FILE, {})
-    if startup_kv_loaded:
-        loaded_pipeline = startup_kv.get('content_pipeline') or loaded_pipeline
-    elif USE_SUPABASE:
+    if USE_SUPABASE:
         try:
             loaded_pipeline = sb.kv_get('content_pipeline', loaded_pipeline) or loaded_pipeline
         except Exception as e:
@@ -678,13 +511,7 @@ def _load_state():
     loaded_tag_assignments = _read_json(COMMENT_TAG_ASSIGNMENTS_FILE, {})
     loaded_inbox_workflow = _read_json(COMMENT_INBOX_WORKFLOW_FILE, {})
     loaded_manual_phones = _read_json(COMMENT_MANUAL_PHONES_FILE, {})
-    if startup_kv_loaded:
-        loaded_templates = startup_kv.get('comment_templates') or loaded_templates
-        loaded_tags = startup_kv.get('comment_tags') or loaded_tags
-        loaded_tag_assignments = startup_kv.get('comment_tag_assignments') or loaded_tag_assignments
-        loaded_inbox_workflow = startup_kv.get('comment_inbox_workflow') or loaded_inbox_workflow
-        loaded_manual_phones = startup_kv.get('comment_manual_phones') or loaded_manual_phones
-    elif USE_SUPABASE:
+    if USE_SUPABASE:
         try:
             loaded_templates = sb.kv_get('comment_templates', loaded_templates) or loaded_templates
         except Exception as e:
@@ -1016,49 +843,9 @@ def _extract_media_urls(body: dict) -> list[str]:
     return urls
 
 
-def _facebook_publish_error(result: dict | None, target_type: str = '', fallback: str = '') -> tuple[str, dict]:
-    error = (result or {}).get('error') or {}
-    message = str(error.get('error_user_msg') or error.get('message') or fallback or 'Lỗi không xác định').strip()
-    code = error.get('code')
-    subcode = error.get('error_subcode')
-    error_type = str(error.get('type') or '').strip()
-    trace_id = str(error.get('fbtrace_id') or '').strip()
-    generic = message.lower() in ('an unknown error has occurred.', 'an unknown error has occurred', 'lỗi không xác định')
-
-    if str(target_type or '').strip().lower() == 'group' and generic:
-        message = (
-            'Facebook từ chối đăng tự động vào Group. Meta đã ngừng Groups API/publish_to_groups; '
-            'hãy thử riêng một nhóm để kiểm tra quyền, hoặc mở nhóm Facebook và đăng thủ công.'
-        )
-    elif code in (190, 368):
-        message = 'Cookie/token Facebook hết hạn hoặc không hợp lệ. Cập nhật cookie rồi thử lại.'
-    elif code == 200:
-        message = error.get('error_user_msg') or 'Tài khoản/Page không có quyền đăng vào nơi này.'
-    elif code in (4, 17, 32, 341, 613):
-        message = 'Facebook đang giới hạn tần suất đăng. Chờ vài phút rồi thử lại với ít nơi hơn.'
-
-    identifiers = []
-    if code is not None:
-        identifiers.append(f'Facebook #{code}')
-    if subcode is not None:
-        identifiers.append(f'subcode {subcode}')
-    if identifiers and not any(item.lower() in message.lower() for item in identifiers):
-        message = f"{message} ({', '.join(identifiers)})"
-
-    diagnostics = {
-        key: value for key, value in {
-            'facebook_error_code': code,
-            'facebook_error_subcode': subcode,
-            'facebook_error_type': error_type,
-            'facebook_trace_id': trace_id,
-        }.items() if value not in (None, '')
-    }
-    return message, diagnostics
-
-
 def _publish_content_pipeline_post(post: dict, targets: list[dict], dry_run: bool = False) -> dict:
-    default_message = _pipeline_post_message(post)
-    if not default_message:
+    message = _pipeline_post_message(post)
+    if not message:
         return {'ok': False, 'error': 'Bản nháp chưa có nội dung', 'results': []}
     media_url, native_video_url = _extract_post_media(post)
     media_urls = _extract_media_urls(post)
@@ -1068,9 +855,7 @@ def _publish_content_pipeline_post(post: dict, targets: list[dict], dry_run: boo
         target_type = str((target or {}).get('type') or '').strip().lower()
         target_id = str((target or {}).get('id') or '').strip()
         target_name = str((target or {}).get('name') or '').strip()
-        message = str((target or {}).get('message') or (target or {}).get('caption') or default_message).strip()
         delivery = 'native_media' if media_urls else ('native_video' if native_video_url else ('link_preview' if media_url else 'text'))
-        target_api = None
         try:
             if dry_run:
                 ok_count += 1
@@ -1091,8 +876,7 @@ def _publish_content_pipeline_post(post: dict, targets: list[dict], dry_run: boo
                 page_token = _page_token_from_cache(target_id)
                 if not page_token:
                     raise RuntimeError('Không lấy được Page token')
-                target_api = get_api(DEFAULT_GROUP)
-                result = target_api.create_page_post(
+                result = get_api(DEFAULT_GROUP).create_page_post(
                     target_id,
                     message,
                     page_token,
@@ -1105,8 +889,7 @@ def _publish_content_pipeline_post(post: dict, targets: list[dict], dry_run: boo
                     raise RuntimeError('Thiếu group_id')
                 page_id = str((target or {}).get('page_id') or '').strip()
                 page_token = _page_token_from_cache(page_id) if page_id else None
-                target_api = get_api(target_id)
-                result = target_api.create_post(
+                result = get_api(target_id).create_post(
                     message,
                     page_token,
                     '' if media_urls else media_url,
@@ -1126,8 +909,8 @@ def _publish_content_pipeline_post(post: dict, targets: list[dict], dry_run: boo
                     'native_video_error': (result or {}).get('_native_video_error'),
                 })
             else:
-                api_error = getattr(target_api, 'last_graph_error', '') if target_api else ''
-                err, diagnostics = _facebook_publish_error(result, target_type or 'group', api_error)
+                fb_error = (result or {}).get('error') or {}
+                err = fb_error.get('error_user_msg') or fb_error.get('message') or 'Lỗi không xác định'
                 results.append({
                     'ok': False,
                     'type': target_type or 'group',
@@ -1136,60 +919,10 @@ def _publish_content_pipeline_post(post: dict, targets: list[dict], dry_run: boo
                     'error': err,
                     'delivery': delivery,
                     'native_video_error': (result or {}).get('_native_video_error'),
-                    **diagnostics,
                 })
         except Exception as e:
-            results.append({'ok': False, 'type': target_type or 'group', 'id': target_id, 'name': target_name, 'error': friendly_graph_error(e), 'delivery': delivery})
+            results.append({'ok': False, 'type': target_type or 'group', 'id': target_id, 'name': target_name, 'error': str(e), 'delivery': delivery})
     return {'ok': ok_count > 0, 'success_count': ok_count, 'failed_count': len(results) - ok_count, 'results': results}
-
-
-def _normalize_publish_interval_minutes(value) -> int:
-    try:
-        minutes = int(value or 0)
-    except (TypeError, ValueError):
-        return 0
-    return min(max(minutes, 0), 24 * 60)
-
-
-def _utc_iso(value: datetime | None = None) -> str:
-    return (value or datetime.now(timezone.utc)).isoformat(timespec='seconds').replace('+00:00', 'Z')
-
-
-def _enqueue_staggered_publish(body: dict, targets: list[dict], interval_minutes: int) -> dict:
-    global _content_pipeline
-    message = str(body.get('message') or body.get('content') or '').strip()
-    media_url, native_video_url = _extract_post_media(body)
-    media_urls = _extract_media_urls(body)
-    staff = _current_staff()
-    now = _utc_iso()
-    post = {
-        'id': f"queue_{uuid.uuid4().hex[:12]}",
-        'article_title': str(body.get('title') or '').strip() or message[:100],
-        'article_url': media_url or native_video_url or (media_urls[0] if media_urls else ''),
-        'source_name': 'Staggered publisher',
-        'format': 'manual',
-        'content': message,
-        'media_url': '' if media_urls else media_url,
-        'native_video_url': '' if media_urls else native_video_url,
-        'media_urls': media_urls,
-        'hashtags': '',
-        'status': 'scheduled',
-        'scheduled_at': now,
-        'scheduled_targets': targets,
-        'scheduled_target_index': 0,
-        'publish_interval_minutes': interval_minutes,
-        'publish_results': [],
-        'created_by_staff_id': staff.get('id', ''),
-        'created_by_staff_name': staff.get('name', ''),
-        'created_at': now,
-        'updated_at': now,
-    }
-    with _scheduled_posts_lock:
-        posts = list(_content_pipeline.get('posts') or [])
-        posts.insert(0, post)
-        _content_pipeline['posts'] = posts[:250]
-        _save_content_pipeline()
-    return post
 
 
 def _rss_child_text(item, names: tuple[str, ...]) -> str:
@@ -1481,7 +1214,6 @@ def _normalise_lead(lead: dict, post_id: str = '') -> dict:
 def _merge_leads_into_memory(leads: list[dict]) -> int:
     global _leads
     changed = 0
-    dirty = False
     for lead in leads or []:
         row = _normalise_lead(lead)
         pid = row.get('post_id')
@@ -1494,15 +1226,11 @@ def _merge_leads_into_memory(leads: list[dict]) -> int:
             continue
         public_row = {k: v for k, v in row.items() if k != 'raw_lead'}
         if key in existing:
-            next_row = {**bucket[existing[key]], **public_row}
-            if next_row != bucket[existing[key]]:
-                bucket[existing[key]] = next_row
-                dirty = True
+            bucket[existing[key]] = {**bucket[existing[key]], **public_row}
         else:
             bucket.append(public_row)
             changed += 1
-            dirty = True
-    if dirty:
+    if changed:
         _save_leads()
     return changed
 
@@ -1660,24 +1388,6 @@ def _lead_to_supabase_row(lead: dict) -> dict:
     row = _normalise_lead(lead)
     staff = _current_staff()
     now = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
-    owner_id = str(
-        row.get('processed_by_staff_id')
-        or row.get('created_by_staff_id')
-        or staff.get('id')
-        or ''
-    ).strip()
-    owner_name = str(
-        row.get('processed_by')
-        or row.get('created_by_staff_name')
-        or staff.get('name')
-        or ''
-    ).strip()
-    owner_username = str(
-        row.get('processed_by_staff_username')
-        or row.get('created_by_staff_username')
-        or (staff.get('username') if owner_id == str(staff.get('id') or '').strip() else '')
-        or ''
-    ).strip()
     return {
         'lead_key': row.get('lead_key'),
         'platform': row.get('platform'),
@@ -1701,262 +1411,12 @@ def _lead_to_supabase_row(lead: dict) -> dict:
         'confidence': row.get('confidence'),
         'evidence': row.get('evidence'),
         'raw_lead': row,
-        'created_by_staff_id': owner_id,
-        'created_by_staff_name': owner_name,
-        'created_by_staff_username': owner_username,
+        'created_by_staff_id': staff.get('id', ''),
+        'created_by_staff_name': staff.get('name', ''),
+        'created_by_staff_username': staff.get('username', ''),
         'created_at': row.get('created_at') or now,
         'updated_at': now,
     }
-
-
-def _flow_lead_sync_enabled() -> bool:
-    if not FLOW_SUPABASE_SYNC_ENABLED or not FLOW_SUPABASE_URL or not FLOW_SUPABASE_KEY:
-        return False
-    source = (SUPABASE_URL or '').rstrip('/').lower()
-    target = FLOW_SUPABASE_URL.rstrip('/').lower()
-    return bool(source and target and source != target)
-
-
-def _flow_headers(prefer: str = '') -> dict:
-    headers = {
-        'apikey': FLOW_SUPABASE_KEY,
-        'Authorization': f'Bearer {FLOW_SUPABASE_KEY}',
-        'Content-Type': 'application/json',
-    }
-    if prefer:
-        headers['Prefer'] = prefer
-    return headers
-
-
-def _flow_error(resp) -> str:
-    try:
-        payload = resp.json()
-        return str(payload.get('message') or payload.get('error') or resp.text)[:300]
-    except Exception:
-        return str(resp.text or f'HTTP {resp.status_code}')[:300]
-
-
-def _flow_owner_map(rows: list[dict]) -> tuple[dict[str, dict], str]:
-    usernames = {
-        str(row.get('created_by_staff_username') or '').strip().lower()
-        for row in rows
-        if str(row.get('created_by_staff_username') or '').strip()
-    }
-    names = {
-        str(row.get('created_by_staff_name') or '').strip().lower()
-        for row in rows
-        if str(row.get('created_by_staff_name') or '').strip()
-    }
-    if not usernames and not names:
-        return {}, ''
-
-    try:
-        staff_resp = _req.get(
-            f"{FLOW_SUPABASE_URL.rstrip('/')}/rest/v1/{FLOW_SUPABASE_STAFF_TABLE}",
-            headers=_flow_headers(),
-            params={
-                'select': 'id,name,username,password,role,enabled',
-                'limit': '500',
-            },
-            timeout=20,
-        )
-        if staff_resp.status_code not in (200, 206):
-            return {}, f'Không đọc được nhân sự F-Solution: {_flow_error(staff_resp)}'
-        staff_rows = staff_resp.json() or []
-
-        users_resp = _req.get(
-            f"{FLOW_SUPABASE_URL.rstrip('/')}/rest/v1/{FLOW_SUPABASE_USER_TABLE}",
-            headers=_flow_headers(),
-            params={'select': 'user_id,username,full_name', 'limit': '500'},
-            timeout=20,
-        )
-        if users_resp.status_code not in (200, 206):
-            return {}, f'Không đọc được tài khoản F-Solution: {_flow_error(users_resp)}'
-        user_rows = users_resp.json() or []
-    except Exception as e:
-        return {}, str(e)[:300]
-
-    users_by_username = {
-        str(item.get('username') or '').strip().lower(): item
-        for item in user_rows
-        if str(item.get('username') or '').strip()
-    }
-    users_by_name = {
-        str(item.get('full_name') or '').strip().lower(): item
-        for item in user_rows
-        if str(item.get('full_name') or '').strip()
-    }
-    staff_by_username = {
-        str(item.get('username') or '').strip().lower(): item
-        for item in staff_rows
-        if str(item.get('username') or '').strip()
-    }
-    staff_by_name = {
-        str(item.get('name') or '').strip().lower(): item
-        for item in staff_rows
-        if str(item.get('name') or '').strip()
-    }
-
-    missing_users = []
-    for username in usernames:
-        if username in users_by_username:
-            continue
-        staff = staff_by_username.get(username)
-        if not staff:
-            continue
-        user_id = str(staff.get('id') or '').strip()
-        if not user_id:
-            continue
-        role = str(staff.get('role') or 'staff').strip()
-        new_user = {
-            'user_id': user_id,
-            'full_name': str(staff.get('name') or username).strip(),
-            'username': username,
-            'phone': username,
-            'password': str(staff.get('password') or '123456'),
-            'role': role,
-            'access_role': 'admin' if role.lower() == 'admin' else 'worker',
-            'enabled': bool(staff.get('enabled', True)),
-            'status': 'active' if bool(staff.get('enabled', True)) else 'inactive',
-            'updated_at': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
-        }
-        missing_users.append(new_user)
-        users_by_username[username] = new_user
-        users_by_name[str(new_user['full_name']).lower()] = new_user
-
-    if missing_users:
-        try:
-            create_resp = _req.post(
-                f"{FLOW_SUPABASE_URL.rstrip('/')}/rest/v1/{FLOW_SUPABASE_USER_TABLE}?on_conflict=user_id",
-                headers=_flow_headers('resolution=merge-duplicates,return=minimal'),
-                json=missing_users,
-                timeout=20,
-            )
-            if create_resp.status_code not in (200, 201, 204):
-                return {}, f'Không đồng bộ được tài khoản F-Solution: {_flow_error(create_resp)}'
-        except Exception as e:
-            return {}, str(e)[:300]
-
-    owner_map: dict[str, dict] = {}
-    for username in usernames:
-        user = users_by_username.get(username)
-        staff = staff_by_username.get(username)
-        if user:
-            owner_map[f'username:{username}'] = {
-                'id': str(user.get('user_id') or ((staff or {}).get('id')) or ''),
-                'name': str(user.get('full_name') or (staff or {}).get('name') or ''),
-                'username': username,
-            }
-    for name in names:
-        user = users_by_name.get(name)
-        staff = staff_by_name.get(name)
-        if user:
-            owner_map[f'name:{name}'] = {
-                'id': str(user.get('user_id') or ((staff or {}).get('id')) or ''),
-                'name': str(user.get('full_name') or (staff or {}).get('name') or ''),
-                'username': str(user.get('username') or (staff or {}).get('username') or ''),
-            }
-    return owner_map, ''
-
-
-def _flow_lead_row(row: dict, owner_map: dict[str, dict]) -> dict:
-    target = dict(row)
-    target.pop('id', None)
-    username = str(row.get('created_by_staff_username') or '').strip().lower()
-    name = str(row.get('created_by_staff_name') or '').strip().lower()
-    owner = owner_map.get(f'username:{username}') or owner_map.get(f'name:{name}') or {}
-    owner_id = str(owner.get('id') or '').strip()
-    if owner_id:
-        target['created_by_staff_id'] = owner_id
-        target['created_by_staff_name'] = str(owner.get('name') or row.get('created_by_staff_name') or '')
-        target['created_by_staff_username'] = str(owner.get('username') or username)
-        target['phu_trach'] = owner_id
-        raw_lead = dict(target.get('raw_lead') or {})
-        raw_lead['created_by_staff_id'] = owner_id
-        raw_lead['processed_by_staff_id'] = owner_id
-        raw_lead['created_by_staff_name'] = target['created_by_staff_name']
-        raw_lead['processed_by'] = target['created_by_staff_name']
-        raw_lead['created_by_staff_username'] = target['created_by_staff_username']
-        raw_lead['processed_by_staff_username'] = target['created_by_staff_username']
-        target['raw_lead'] = raw_lead
-    else:
-        target['phu_trach'] = None
-
-    contact_status = str(target.get('contact_status') or '').strip().lower()
-    qualified = contact_status not in ('lost', 'rejected', 'invalid', 'unqualified')
-    target.update({
-        'ho_ten': target.get('customer_name') or 'Ẩn danh',
-        'so_dien_thoai': target.get('customer_phone') or '',
-        'nguon': target.get('lead_source') or target.get('platform') or 'seeding',
-        'anh_nhu_cau_url': target.get('comment_url') or target.get('post_url') or None,
-        'trang_thai': 'qualified' if qualified else 'unqualified',
-        'hop_le': qualified,
-        'thu_nhap': 0,
-        'la_trung': False,
-    })
-    return target
-
-
-def _sync_lead_rows_to_flow(rows: list[dict]) -> tuple[bool, str, int]:
-    if not rows or not _flow_lead_sync_enabled():
-        return True, '', 0
-    unique_rows = {
-        str(row.get('lead_key') or ''): row
-        for row in rows
-        if str(row.get('lead_key') or '').strip()
-    }
-    if not unique_rows:
-        return True, '', 0
-    owner_map, owner_warning = _flow_owner_map(list(unique_rows.values()))
-    if owner_warning:
-        return False, owner_warning, 0
-    payload = [_flow_lead_row(row, owner_map) for row in unique_rows.values()]
-    try:
-        for index in range(0, len(payload), 200):
-            resp = _req.post(
-                f"{FLOW_SUPABASE_URL.rstrip('/')}/rest/v1/{FLOW_SUPABASE_LEAD_TABLE}?on_conflict=lead_key",
-                headers=_flow_headers('resolution=merge-duplicates,return=minimal'),
-                json=payload[index:index + 200],
-                timeout=30,
-            )
-            if resp.status_code not in (200, 201, 204):
-                return False, _flow_error(resp), index
-        return True, '', len(payload)
-    except Exception as e:
-        return False, str(e)[:300], 0
-
-
-def _schedule_flow_lead_sync(rows: list[dict]) -> None:
-    if not rows or not _flow_lead_sync_enabled():
-        return
-
-    def _job():
-        ok, error, _ = _sync_lead_rows_to_flow(rows)
-        if not ok:
-            print(f'[flow-lead-sync] {error}')
-
-    threading.Thread(target=_job, daemon=True).start()
-
-
-def _load_all_supabase_lead_rows(limit: int = 5000) -> tuple[list[dict], str]:
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        return [], 'Chưa cấu hình Supabase'
-    try:
-        resp = _req.get(
-            f"{SUPABASE_URL.rstrip('/')}/rest/v1/{SUPABASE_LEAD_TABLE}",
-            headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}'},
-            params={
-                'select': '*',
-                'order': 'created_at.desc',
-                'limit': str(max(1, min(int(limit or 5000), 5000))),
-            },
-            timeout=30,
-        )
-        if resp.status_code not in (200, 206):
-            return [], _flow_error(resp)
-        return list(resp.json() or []), ''
-    except Exception as e:
-        return [], str(e)[:300]
 
 
 def _save_leads_to_supabase(leads: list[dict]) -> tuple[bool, str]:
@@ -1993,7 +1453,6 @@ def _save_leads_to_supabase(leads: list[dict]) -> tuple[bool, str]:
                     except Exception:
                         pass
                 return False, resp.text[:300]
-        _schedule_flow_lead_sync(rows)
         return True, ''
     except Exception as e:
         return False, str(e)[:300]
@@ -2031,9 +1490,6 @@ def _supabase_lead_row_to_public(row: dict) -> dict:
         'processed_at': raw.get('processed_at') or row.get('processed_at') or '',
         'processed_by': raw.get('processed_by') or row.get('processed_by_staff_name') or row.get('created_by_staff_name') or '',
         'processed_by_staff_id': raw.get('processed_by_staff_id') or row.get('created_by_staff_id') or '',
-        'created_by_staff_id': row.get('created_by_staff_id') or raw.get('created_by_staff_id') or '',
-        'created_by_staff_name': row.get('created_by_staff_name') or raw.get('created_by_staff_name') or '',
-        'created_by_staff_username': row.get('created_by_staff_username') or raw.get('created_by_staff_username') or '',
         'score': raw.get('score') if raw.get('score') is not None else row.get('score'),
         'lead_level': raw.get('lead_level') or '',
         'lead_level_label': raw.get('lead_level_label') or '',
@@ -2051,31 +1507,6 @@ def _public_leads_dict(leads: dict) -> dict:
         if bucket:
             grouped[str(post_id)] = bucket
     return _filter_deleted_leads(grouped)
-
-
-def _filter_leads_for_current_staff(leads: dict) -> dict:
-    if _is_admin():
-        return leads
-    staff = _current_staff()
-    staff_id = str(staff.get('id') or '').strip()
-    staff_name = str(staff.get('name') or '').strip().lower()
-    staff_username = str(staff.get('username') or '').strip().lower()
-    if not staff_id:
-        return {}
-    filtered: dict[str, list] = {}
-    for post_id, items in (leads or {}).items():
-        owned = []
-        for item in items or []:
-            owner_ids = {
-                str(item.get('processed_by_staff_id') or '').strip(),
-                str(item.get('created_by_staff_id') or '').strip(),
-            }
-            assigned_sale = str(item.get('assigned_sale') or '').strip().lower()
-            if staff_id in owner_ids or assigned_sale in {staff_name, staff_username}:
-                owned.append(item)
-        if owned:
-            filtered[post_id] = owned
-    return filtered
 
 
 def _load_leads_from_supabase(limit: int = 3000) -> tuple[dict, str]:
@@ -2610,11 +2041,6 @@ def _primary_staff_cookie(row: dict) -> str:
         for item in cookies:
             if item.get('id') == active_id and item.get('cookie'):
                 return item['cookie']
-    persisted_cookie = str(row.get('cookie') or '').strip()
-    if persisted_cookie:
-        for item in cookies:
-            if item.get('cookie') == persisted_cookie:
-                return item['cookie']
     for item in cookies:
         if item.get('cookie'):
             return item['cookie']
@@ -2718,14 +2144,9 @@ def _staff_with_active_cookie(staff: dict) -> dict:
     merged = dict(staff)
     session_active_id = session.get('active_cookie_id') if has_request_context() else ''
     active_id = str(session_active_id or merged.get('active_cookie_id') or '').strip()
-    cookies = _normalize_staff_facebook_cookies(merged.get('facebook_cookies'), merged.get('cookie', ''))
-    if active_id and any(str(item.get('id') or '') == active_id for item in cookies):
+    if active_id:
         merged['active_cookie_id'] = active_id
-    else:
-        primary = _primary_staff_cookie(merged)
-        primary_item = next((item for item in cookies if item.get('cookie') == primary), None)
-        merged['active_cookie_id'] = str(primary_item.get('id') or '') if primary_item else ''
-    return _sync_staff_cookie_fields(merged)
+    return merged
 
 
 def _is_invalid_facebook_display_name(raw: str) -> bool:
@@ -3032,18 +2453,12 @@ def _prefetch_facebook_display_name(staff: dict) -> None:
     threading.Thread(target=_job, daemon=True).start()
 
 
-def _fetch_facebook_profile(
-    cookie: str,
-    *,
-    allow_token: bool = True,
-    fast: bool = False,
-    force_refresh: bool = False,
-) -> dict:
+def _fetch_facebook_profile(cookie: str, *, allow_token: bool = True, fast: bool = False) -> dict:
     user_id = _extract_cookie_user(cookie)
     if not user_id:
         return {'ok': False, 'name': '', 'id': '', 'error': 'Cookie thiếu c_user'}
     cached = _fb_profile_cache.get(user_id)
-    if not force_refresh and cached and (time_module.time() - float(cached.get('ts') or 0)) < 3600:
+    if cached and (time_module.time() - float(cached.get('ts') or 0)) < 3600:
         return {k: cached[k] for k in ('ok', 'name', 'id', 'error') if k in cached}
 
     try:
@@ -3205,19 +2620,9 @@ def _facebook_cookie_context_payload(staff: dict, *, resolve_name: bool = False,
         if should_resolve:
             cache_key = fb_id or cookie_id
             if cache_key not in profile_cache:
-                profile = _fetch_facebook_profile(
-                    cookie_val,
-                    allow_token=False,
-                    fast=not force_refresh,
-                    force_refresh=force_refresh,
-                )
+                profile = _fetch_facebook_profile(cookie_val, allow_token=False, fast=not force_refresh)
                 if not profile.get('ok'):
-                    profile = _fetch_facebook_profile(
-                        cookie_val,
-                        allow_token=True,
-                        fast=False,
-                        force_refresh=force_refresh,
-                    )
+                    profile = _fetch_facebook_profile(cookie_val, allow_token=True, fast=False)
                 profile_cache[cache_key] = profile
             profile = profile_cache[cache_key]
             if profile.get('ok') and profile.get('name'):
@@ -3257,16 +2662,10 @@ def _persist_active_cookie_choice(staff: dict, cookie_id: str, cookie: str) -> N
         return
     session['active_cookie_id'] = cookie_id
     now = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
-    normalized_cookies = _normalize_staff_facebook_cookies(
-        staff.get('facebook_cookies'),
-        staff.get('cookie', ''),
-    )
-    normalized_cookies.sort(key=lambda item: 0 if str(item.get('id') or '') == cookie_id else 1)
     remote_row = {
         'active_cookie_id': cookie_id,
         'cookie': cookie,
         'facebook_user_id': _extract_cookie_user(cookie),
-        'facebook_cookies': normalized_cookies,
         'updated_at': now,
     }
     if USE_SUPABASE:
@@ -3280,14 +2679,20 @@ def _persist_active_cookie_choice(staff: dict, cookie_id: str, cookie: str) -> N
         local_target['cookie'] = cookie
         local_target['facebook_user_id'] = _extract_cookie_user(cookie)
         local_target['updated_at'] = now
-        local_target['facebook_cookies'] = normalized_cookies
+        local_target['facebook_cookies'] = _normalize_staff_facebook_cookies(
+            local_target.get('facebook_cookies'),
+            cookie,
+        )
         _save_staff_cookies()
     token = session.get('staff_cache_token', '')
     if token and token in _session_staff_cache:
         cached = dict(_session_staff_cache[token])
         cached.update(remote_row)
         cached['active_cookie_id'] = cookie_id
-        cached['facebook_cookies'] = normalized_cookies
+        cached['facebook_cookies'] = _normalize_staff_facebook_cookies(
+            cached.get('facebook_cookies'),
+            cookie,
+        )
         _session_staff_cache[token] = cached
     _invalidate_facebook_cache(staff_id)
 
@@ -3610,7 +3015,6 @@ def _set_logged_in_staff(staff: dict) -> None:
     if old_token:
         _session_staff_cache.pop(old_token, None)
 
-    session.permanent = True
     session['staff_id'] = staff.get('id', '')
     session['staff_username'] = staff.get('username', '')
     session['staff_source'] = staff.get('_auth_source', 'local')
@@ -3629,10 +3033,14 @@ def _set_logged_in_staff(staff: dict) -> None:
 
 
 def _clear_logged_in_staff() -> None:
-    token = session.get('staff_cache_token', '')
+    token = session.pop('staff_cache_token', None)
     if token:
         _session_staff_cache.pop(token, None)
-    session.clear()
+    session.pop('staff_id', None)
+    session.pop('staff_username', None)
+    session.pop('staff_source', None)
+    session.pop('active_cookie_id', None)
+    session.pop('facebook_display_name', None)
 
 
 def _setup_required() -> bool:
@@ -3647,31 +3055,20 @@ def _current_staff() -> dict:
         return _staff_with_active_cookie(override)
     if not has_request_context():
         return {}
-
-    # A request can ask for the current staff multiple times. Reusing the first
-    # resolution avoids repeated Supabase calls and preserves the restore error
-    # so it cannot be mistaken for an expired login later in the same request.
-    resolved = getattr(g, 'current_staff_resolution', None)
-    if resolved is not None:
-        return resolved
-
     staff_id = session.get('staff_id', '')
     if not staff_id:
-        g.current_staff_resolution = {}
-        return g.current_staff_resolution
+        return {}
     local = next((item for item in _staff_accounts() if item.get('id') == staff_id and item.get('enabled', True)), {})
     if local:
-        g.current_staff_resolution = _staff_with_active_cookie(local)
-        return g.current_staff_resolution
+        return _staff_with_active_cookie(local)
 
     token = session.get('staff_cache_token', '')
     cached = _session_staff_cache.get(token) if token else None
     if cached and cached.get('id') == staff_id and cached.get('enabled', True):
-        g.current_staff_resolution = _staff_with_active_cookie(cached)
-        return g.current_staff_resolution
+        return _staff_with_active_cookie(cached)
 
     if session.get('staff_source') == 'supabase':
-        row, restore_error = _load_supabase_staff(session.get('staff_username', ''))
+        row, _ = _load_supabase_staff(session.get('staff_username', ''))
         if row:
             staff = _normalize_supabase_staff(row)
             if staff.get('id') == staff_id and staff.get('enabled', True):
@@ -3679,12 +3076,8 @@ def _current_staff() -> dict:
                 staff = _staff_with_active_cookie(staff)
                 _session_staff_cache[token] = staff
                 session['staff_cache_token'] = token
-                g.current_staff_resolution = staff
-                return g.current_staff_resolution
-        if restore_error:
-            g.current_staff_restore_error = restore_error
-    g.current_staff_resolution = {}
-    return g.current_staff_resolution
+                return staff
+    return {}
 
 
 def _current_staff_id() -> str:
@@ -3746,30 +3139,10 @@ def _clear_staff_access_token(staff_id: str = '', cookie_id: str = '', cookie: s
             pass
 
 
-def _clear_all_staff_access_tokens() -> None:
-    """Discard token files from a previous process/cookie generation."""
-    try:
-        names = os.listdir(STAFF_TOKEN_DIR)
-    except OSError:
-        return
-    for name in names:
-        if not name.endswith('.txt'):
-            continue
-        try:
-            os.remove(os.path.join(STAFF_TOKEN_DIR, name))
-        except OSError:
-            pass
-
-
 def _invalidate_facebook_cache(staff_id: str = '') -> None:
-    global _api_cache, _pages_cache, _fb_profile_cache, _staff_fb_display_names
     _api_cache.clear()
     _pages_cache.clear()
     if staff_id:
-        _fb_profile_cache.clear()
-        _staff_fb_display_names.pop(staff_id, None)
-        if has_request_context() and staff_id == _current_staff_id():
-            session.pop('facebook_display_name', None)
         _clear_staff_access_token(staff_id)
 
 
@@ -4234,8 +3607,6 @@ def _sync_managed_channel_supabase(row: dict, *, channel_id: str = '') -> tuple[
         if cid:
             try:
                 remote = sb.update_managed_channel(cid, db_row, SUPABASE_CHANNEL_TABLE)
-                if not remote:
-                    remote = sb.upsert_managed_channel({**db_row, 'id': cid}, SUPABASE_CHANNEL_TABLE)
             except Exception as update_err:
                 remote = sb.upsert_managed_channel({**db_row, 'id': cid}, SUPABASE_CHANNEL_TABLE)
                 if not remote:
@@ -5475,23 +4846,7 @@ def _record_tiktok_extension_comment(body: dict) -> tuple[dict, int]:
     if not comment_id.startswith('tiktok_'):
         comment_id = f'tiktok_{comment_id}'
 
-    log = _record_comment_log(
-        final_post_id,
-        'tiktok',
-        final_url,
-        message,
-        delivery,
-        'success',
-        comment_id=comment_id,
-        lead_context={
-            'platform': 'tiktok',
-            'customer_name': body.get('customer_name') or body.get('author_name') or body.get('channel_name'),
-            'customer_need': body.get('customer_need') or body.get('comment_text') or body.get('video_title'),
-            'video_title': body.get('video_title'),
-            'channel_name': body.get('channel_name'),
-        },
-        create_lead=not is_manual,
-    )
+    log = _record_comment_log(final_post_id, 'tiktok', final_url, message, delivery, 'success', comment_id=comment_id)
     rows = [{
         'source': 'tiktok',
         'post_id': final_post_id,
@@ -5791,130 +5146,8 @@ def _filter_posts_for_staff(posts: list, staff_id: str) -> tuple[list, int]:
     return kept, skipped
 
 
-def _commented_post_lead_key(platform: str, post_id: str, staff_id: str) -> str:
-    identity = '|'.join([
-        'commented_post',
-        str(platform or '').strip().lower(),
-        str(post_id or '').strip(),
-        str(staff_id or '').strip(),
-    ])
-    return hashlib.sha1(identity.encode('utf-8')).hexdigest()
-
-
-def _lead_from_comment_log(log: dict, lead_context: dict | None = None) -> dict:
-    if str(log.get('status') or '').strip().lower() != 'success':
-        return {}
-    context = lead_context if isinstance(lead_context, dict) else {}
-    post_id = str(log.get('post_id') or '').strip()
-    staff_id = str(log.get('staff_id') or '').strip()
-    if not post_id or not staff_id:
-        return {}
-
-    platform = str(context.get('platform') or '').strip().lower()
-    if not platform:
-        platform = 'tiktok' if post_id.startswith('tiktok_') or str(log.get('group_id') or '') == 'tiktok' else 'facebook'
-    processor = str(log.get('staff_name') or log.get('staff_username') or 'Nhân sự').strip()
-    staff_username = str(log.get('staff_username') or '').strip()
-    customer_name = str(
-        context.get('customer_name')
-        or context.get('author_name')
-        or context.get('channel_name')
-        or 'Ẩn danh'
-    ).strip()
-    customer_need = str(
-        context.get('customer_need')
-        or context.get('post_message')
-        or context.get('video_title')
-        or ''
-    ).strip()
-    outbound_comment = str(log.get('comment_text') or '').strip()
-    phones = extract_phones(customer_need)
-    now = str(log.get('created_at') or datetime.utcnow().isoformat(timespec='seconds') + 'Z')
-    lead_key = _commented_post_lead_key(platform, post_id, staff_id)
-    return _normalise_lead({
-        'lead_key': lead_key,
-        'platform': platform,
-        'source': 'commented_post',
-        'source_id': post_id,
-        'post_id': post_id,
-        'group_id': str(log.get('group_id') or context.get('group_id') or '').strip(),
-        'post_url': str(log.get('post_url') or context.get('post_url') or '').strip(),
-        'comment_id': str(log.get('comment_id') or '').strip(),
-        'name': customer_name,
-        'comment_author': customer_name,
-        'comment_text': outbound_comment,
-        'need': customer_need[:500] or 'Bài viết đã được nhân sự bình luận và cần Sale chăm sóc.',
-        'evidence': (customer_need[:300] or f'Đã bình luận: {outbound_comment[:260]}').strip(),
-        'phone': phones[0] if phones else '',
-        'phones': phones,
-        'intent': 'staff_commented_post',
-        'contact_status': 'has_phone' if phones else 'no_phone',
-        'confidence': 0.95 if phones else 0.6,
-        'processed_at': now,
-        'processed_by': processor,
-        'processed_by_staff_id': staff_id,
-        'processed_by_staff_username': staff_username,
-        'created_by_staff_id': staff_id,
-        'created_by_staff_name': processor,
-        'created_by_staff_username': staff_username,
-        'assigned_sale': processor,
-        'crm_status': 'Lead mới',
-        'created_at': now,
-    }, post_id)
-
-
-def _upsert_lead_from_comment_log(log: dict, lead_context: dict | None = None) -> tuple[dict, bool, str]:
-    lead = _lead_from_comment_log(log, lead_context)
-    if not lead:
-        return {}, True, ''
-    _merge_leads_into_memory([lead])
-    supabase_ok, supabase_error = _save_leads_to_supabase([lead])
-    return lead, supabase_ok, supabase_error
-
-
-def _reconcile_commented_post_leads(logs: list[dict], existing_leads: dict) -> tuple[dict, str]:
-    existing_keys = {
-        str(item.get('lead_key') or _lead_key(item))
-        for items in (existing_leads or {}).values()
-        for item in (items or [])
-    }
-    candidates: dict[str, dict] = {}
-    skipped_deleted = 0
-    ordered_logs = sorted(
-        (item for item in (logs or []) if isinstance(item, dict)),
-        key=lambda item: str(item.get('created_at') or ''),
-    )
-    for log in ordered_logs:
-        lead = _lead_from_comment_log(log)
-        if not lead:
-            continue
-        key = str(lead.get('lead_key') or '')
-        if not key:
-            continue
-        if key in _deleted_lead_keys:
-            skipped_deleted += 1
-            continue
-        candidates[key] = lead
-
-    missing = [lead for key, lead in candidates.items() if key not in existing_keys]
-    if missing:
-        _merge_leads_into_memory(missing)
-        supabase_ok, supabase_error = _save_leads_to_supabase(missing)
-    else:
-        supabase_ok, supabase_error = True, ''
-    return {
-        'ok': supabase_ok,
-        'candidate_count': len(candidates),
-        'existing_count': len(candidates) - len(missing),
-        'created_count': len(missing) if supabase_ok else 0,
-        'pending_count': 0 if supabase_ok else len(missing),
-        'skipped_deleted': skipped_deleted,
-    }, supabase_error
-
-
 def _record_comment_log(post_id: str, group_id: str, post_url: str, message: str, page_id: str,
-                        status: str, comment_id: str = '', error_message: str = '', image_url: str = '',
-                        lead_context: dict | None = None, create_lead: bool = True) -> dict:
+                        status: str, comment_id: str = '', error_message: str = '', image_url: str = '') -> dict:
     global _comment_logs
     staff = _current_staff()
     now = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
@@ -5938,119 +5171,9 @@ def _record_comment_log(post_id: str, group_id: str, post_url: str, message: str
     _save_comment_logs()
     supabase_ok, supabase_error = _save_comment_log_to_supabase(log)
     log['storage'] = 'supabase' if supabase_ok else 'local'
-    warnings = [f'Lịch sử: {supabase_error}'] if supabase_error else []
-    if create_lead and status == 'success':
-        try:
-            lead, lead_ok, lead_error = _upsert_lead_from_comment_log(log, lead_context)
-            if lead:
-                log['lead_key'] = lead.get('lead_key')
-                log['lead_storage'] = 'supabase' if lead_ok else 'local'
-            if lead_error:
-                warnings.append(f'Lead: {lead_error}')
-        except Exception as e:
-            warnings.append(f'Lead: {str(e)[:300]}')
-    if warnings:
-        log['storage_warning'] = ' | '.join(warnings)
+    if supabase_error:
+        log['storage_warning'] = supabase_error
     return log
-
-
-def _comment_log_identity(log: dict) -> tuple[str, ...]:
-    created_at = str(log.get('created_at') or '').strip()
-    parsed_created_at = _parse_log_time(created_at)
-    if parsed_created_at:
-        created_at = parsed_created_at.isoformat(timespec='seconds')
-    return (
-        str(log.get('staff_id') or '').strip(),
-        str(log.get('post_id') or '').strip(),
-        str(log.get('comment_id') or '').strip(),
-        str(log.get('status') or '').strip(),
-        created_at,
-        str(log.get('comment_text') or '').strip(),
-        str(log.get('error_message') or '').strip(),
-    )
-
-
-def _merge_comment_log_rows(local_rows: list, remote_rows: list, limit: int = 200) -> list[dict]:
-    merged: dict[tuple[str, ...], dict] = {}
-    for source, rows in (('local', local_rows), ('supabase', remote_rows)):
-        for item in rows or []:
-            if not isinstance(item, dict):
-                continue
-            row = {**item, 'storage': item.get('storage') or source}
-            key = _comment_log_identity(row)
-            merged[key] = {**merged.get(key, {}), **row}
-
-    def sort_key(row: dict) -> tuple[float, int]:
-        created_at = _parse_log_time(str(row.get('created_at') or ''))
-        timestamp = created_at.timestamp() if created_at else 0.0
-        try:
-            row_id = int(row.get('id') or 0)
-        except (TypeError, ValueError):
-            row_id = 0
-        return timestamp, row_id
-
-    rows = sorted(merged.values(), key=sort_key)
-    return rows[-max(1, min(int(limit or 200), 5000)):]
-
-
-def _load_comment_logs_from_supabase(staff_id: str = '', limit: int = 1000) -> tuple[list[dict], str]:
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        return [], 'Chưa cấu hình Supabase'
-    params = {
-        'select': '*',
-        'order': 'created_at.desc',
-        'limit': str(max(1, min(int(limit or 1000), 5000))),
-    }
-    if staff_id:
-        params['staff_id'] = f'eq.{staff_id}'
-    try:
-        resp = _req.get(
-            f"{SUPABASE_URL.rstrip('/')}/rest/v1/{SUPABASE_COMMENT_LOG_TABLE}",
-            headers={
-                'apikey': SUPABASE_KEY,
-                'Authorization': f'Bearer {SUPABASE_KEY}',
-            },
-            params=params,
-            timeout=30,
-        )
-        if resp.status_code not in (200, 206):
-            return [], resp.text[:300]
-        rows = resp.json()
-        return (rows if isinstance(rows, list) else []), ''
-    except Exception as e:
-        return [], str(e)[:300]
-
-
-def _normalise_imported_comment_log(raw: dict, staff_by_username: dict[str, dict]) -> dict:
-    if not isinstance(raw, dict):
-        return {}
-    status = str(raw.get('status') or '').strip().lower()
-    post_id = str(raw.get('post_id') or '').strip()
-    created_at = _parse_log_time(str(raw.get('created_at') or ''))
-    username = str(raw.get('staff_username') or '').strip().lower()
-    matched_staff = staff_by_username.get(username) or {}
-    staff_id = str(matched_staff.get('id') or raw.get('staff_id') or '').strip()
-    if status not in {'success', 'failed', 'processed'} or not post_id or not staff_id or not created_at:
-        return {}
-    comment_text = str(raw.get('comment_text') or '').strip()
-    if not comment_text:
-        comment_text = '[Đã xử lý bài viết]' if status == 'processed' else '[Bình luận bằng ảnh]'
-    return {
-        'staff_id': staff_id[:160],
-        'staff_name': str(matched_staff.get('name') or raw.get('staff_name') or '').strip()[:160],
-        'staff_username': str(matched_staff.get('username') or username).strip()[:160],
-        'facebook_user_id': str(raw.get('facebook_user_id') or '').strip()[:160],
-        'post_id': post_id[:500],
-        'group_id': str(raw.get('group_id') or '').strip()[:500],
-        'post_url': str(raw.get('post_url') or '').strip()[:2000],
-        'comment_text': comment_text[:10000],
-        'comment_image_url': str(raw.get('comment_image_url') or '').strip()[:2000],
-        'comment_id': str(raw.get('comment_id') or '').strip()[:500],
-        'page_id': str(raw.get('page_id') or '').strip()[:500],
-        'status': status,
-        'error_message': str(raw.get('error_message') or '').strip()[:2000],
-        'created_at': created_at.isoformat(timespec='seconds').replace('+00:00', 'Z'),
-    }
 
 
 def _today_utc_bounds() -> tuple[datetime, datetime]:
@@ -6241,23 +5364,10 @@ def _get_ai_key_from_config(provider: str, config: dict) -> str:
 
 def _get_classifier() -> AIClassifier:
     cfg, _, _ = _effective_ai_config()
-    configured_provider = str(cfg.get('provider') or 'gemini').strip().lower()
-    provider = configured_provider if configured_provider in PROVIDERS else 'gemini'
-    api_key = _get_ai_key_from_config(provider, cfg)
-    if not api_key:
-        preferred = str(os.environ.get('AI_PROVIDER') or '').strip().lower()
-        candidates = [preferred, 'groq', 'openai', 'gemini', 'claude']
-        for candidate in dict.fromkeys(item for item in candidates if item in PROVIDERS):
-            candidate_key = _get_ai_key_from_config(candidate, cfg)
-            if candidate_key:
-                provider = candidate
-                api_key = candidate_key
-                break
+    provider = cfg.get('provider', 'gemini')
     default_model = PROVIDERS.get(provider, {}).get('default_model', DEFAULT_MODEL)
-    if provider == configured_provider:
-        model = cfg.get('model', default_model) or default_model
-    else:
-        model = os.environ.get('AI_MODEL') or default_model
+    model = cfg.get('model', default_model) or default_model
+    api_key = _get_ai_key_from_config(provider, cfg)
     categories = cfg.get('categories', DEFAULT_CATEGORIES)
     return AIClassifier(provider, model, api_key, categories)
 
@@ -6281,21 +5391,11 @@ def _require_auth_for_api():
         return None
     if request.method == 'GET' and request.path.rstrip('/') == '/api/groups/resolve':
         return None
-    public_endpoints = {'auth_status', 'auth_login', 'auth_logout', 'auth_setup', 'api_resolve_group', 'api_health'}
+    public_endpoints = {'auth_status', 'auth_login', 'auth_setup', 'api_resolve_group', 'api_health'}
     if request.path.startswith('/api/') and request.endpoint not in public_endpoints:
         if _setup_required():
             return jsonify({'ok': False, 'error': 'Cần setup tài khoản đầu tiên', 'setup_required': True}), 401
         if not _current_staff():
-            if session.get('staff_id') and getattr(g, 'current_staff_restore_error', ''):
-                response = jsonify({
-                    'ok': False,
-                    'error': 'Máy chủ đang khôi phục phiên đăng nhập. Vui lòng thử lại sau vài giây.',
-                    'auth_recovery_pending': True,
-                    'retry_after': 3,
-                })
-                response.status_code = 503
-                response.headers['Retry-After'] = '3'
-                return response
             return jsonify({'ok': False, 'error': 'Vui lòng đăng nhập', 'auth_required': True}), 401
 
 
@@ -6373,9 +5473,6 @@ def api_health():
             'groups_resolve_public': True,
             'staff_list_refresh_v2': True,
             'channel_db_row_v3': True,
-            'per_target_ai_captions_v1': True,
-            'facebook_publish_diagnostics_v1': True,
-            'staggered_publish_queue_v1': True,
         },
     })
 
@@ -6383,19 +5480,6 @@ def api_health():
 @app.route('/api/auth/status')
 def auth_status():
     staff = _public_current_staff()
-    if not staff and session.get('staff_id') and getattr(g, 'current_staff_restore_error', ''):
-        response = jsonify({
-            'ok': False,
-            'authenticated': False,
-            'auth_recovery_pending': True,
-            'retry_after': 3,
-            'error': 'Máy chủ đang khôi phục phiên đăng nhập. Vui lòng thử lại sau vài giây.',
-        })
-        response.status_code = 503
-        response.headers['Retry-After'] = '3'
-        return response
-    if staff and not session.permanent:
-        session.permanent = True
     return jsonify({
         'ok': True,
         'authenticated': bool(staff),
@@ -6666,8 +5750,7 @@ def api_create_post():
         return jsonify({'ok': False, 'error': 'Thiếu group_id hoặc nội dung/ảnh/video'}), 400
     try:
         page_token = _pages_cache.get(page_id, {}).get('access_token') if page_id else None
-        target_api = get_api(group_id)
-        result = target_api.create_post(
+        result = get_api(group_id).create_post(
             message,
             page_token,
             '' if media_urls else media_url,
@@ -6684,10 +5767,10 @@ def api_create_post():
                 'native_video_error': (result or {}).get('_native_video_error'),
                 'target': {'type': 'group', 'id': group_id},
             })
-        err, diagnostics = _facebook_publish_error(result, 'group', getattr(target_api, 'last_graph_error', ''))
-        return jsonify({'ok': False, 'error': err, 'delivery': delivery, 'native_video_error': (result or {}).get('_native_video_error'), 'target': {'type': 'group', 'id': group_id}, **diagnostics})
+        err = (result or {}).get('error', {}).get('message', 'Lỗi không xác định')
+        return jsonify({'ok': False, 'error': err, 'delivery': delivery, 'native_video_error': (result or {}).get('_native_video_error'), 'target': {'type': 'group', 'id': group_id}})
     except Exception as e:
-        return jsonify({'ok': False, 'error': friendly_graph_error(e), 'target': {'type': 'group', 'id': group_id}}), 500
+        return jsonify({'ok': False, 'error': str(e), 'target': {'type': 'group', 'id': group_id}}), 500
 
 
 @app.route('/api/publish', methods=['POST'])
@@ -6715,27 +5798,12 @@ def api_publish_targets():
             'id': target_id,
             'name': str(item.get('name') or '').strip(),
             'page_id': str(item.get('page_id') or '').strip(),
-            'message': str(item.get('message') or item.get('caption') or '').strip(),
         })
 
     if not targets:
         return jsonify({'ok': False, 'error': 'Danh sách target không hợp lệ'}), 400
 
     dry_run = bool(body.get('dry_run') or body.get('dryRun'))
-    interval_minutes = _normalize_publish_interval_minutes(
-        body.get('stagger_minutes') or body.get('interval_minutes') or body.get('publish_interval_minutes')
-    )
-    if interval_minutes and len(targets) > 1 and not dry_run:
-        post = _enqueue_staggered_publish(body, targets, interval_minutes)
-        return jsonify({
-            'ok': True,
-            'queued': True,
-            'queue_id': post.get('id'),
-            'target_count': len(targets),
-            'completed_count': 0,
-            'interval_minutes': interval_minutes,
-            'first_scheduled_at': post.get('scheduled_at'),
-        }), 202
     result = _publish_content_pipeline_post({
         'content': message,
         'hashtags': '',
@@ -6892,21 +5960,7 @@ def api_comment():
         result = get_api(group_id).post_comment(post_id, message, page_token, image_url)
         if result and 'id' in result:
             log_text = message or '[Bình luận bằng ảnh]'
-            log = _record_comment_log(
-                post_id,
-                group_id,
-                post_url,
-                log_text,
-                page_id,
-                'success',
-                comment_id=result['id'],
-                image_url=image_url,
-                lead_context={
-                    'platform': 'facebook',
-                    'customer_name': body.get('customer_name') or body.get('author_name'),
-                    'customer_need': body.get('customer_need') or body.get('post_message'),
-                },
-            )
+            log = _record_comment_log(post_id, group_id, post_url, log_text, page_id, 'success', comment_id=result['id'], image_url=image_url)
             payload = {'ok': True, 'comment_id': result['id'], 'log_storage': log.get('storage')}
             if log.get('storage_warning'):
                 payload['warning'] = f"Đã lưu local, Supabase chưa ghi được: {log['storage_warning']}"
@@ -6956,20 +6010,7 @@ def api_reply_post_comment():
         api_group_id = DEFAULT_GROUP if page_token else (group_id or DEFAULT_GROUP)
         result = get_api(api_group_id).post_comment(comment_id, message, page_token)
         if result and result.get('id'):
-            log = _record_comment_log(
-                post_id or comment_id,
-                group_id,
-                post_url,
-                message,
-                page_id,
-                'success',
-                comment_id=result['id'],
-                lead_context={
-                    'platform': 'facebook',
-                    'customer_name': body.get('customer_name') or body.get('author_name'),
-                    'customer_need': body.get('customer_need') or body.get('post_message') or body.get('comment_text'),
-                },
-            )
+            log = _record_comment_log(post_id or comment_id, group_id, post_url, message, page_id, 'success', comment_id=result['id'])
             now = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
             staff = _current_staff()
             row = {
@@ -7127,118 +6168,12 @@ def api_mark_post_processed():
 
 @app.route('/api/comment-logs', methods=['GET'])
 def comment_logs_get():
-    global _comment_logs
-    is_admin = _is_admin()
-    staff_id = '' if is_admin else _current_staff_id()
-    if not is_admin and not staff_id:
-        return jsonify([]), 401
-
-    remote_rows, warning = _load_comment_logs_from_supabase(staff_id)
-    if remote_rows:
-        _comment_logs = _merge_comment_log_rows(_comment_logs, remote_rows, limit=5000)
-    if warning:
-        print(f'[comment_logs] Supabase read failed, using local history: {warning}')
-    scoped_rows = _comment_logs if is_admin else [
-        item for item in _comment_logs
-        if str(item.get('staff_id') or '').strip() == staff_id
-    ]
-    return jsonify(_merge_comment_log_rows(scoped_rows, [], limit=200))
-
-
-@app.route('/api/comment-logs/import', methods=['POST'])
-def comment_logs_import():
-    global _comment_logs
     if not _is_admin():
-        return jsonify({'ok': False, 'error': 'Chỉ admin được nhập lịch sử'}), 403
-    body = request.get_json(silent=True) or {}
-    source_rows = body.get('rows') or []
-    if not isinstance(source_rows, list) or not source_rows:
-        return jsonify({'ok': False, 'error': 'Không có lịch sử để nhập'}), 400
-    if len(source_rows) > 1000:
-        return jsonify({'ok': False, 'error': 'Tối đa 1000 dòng mỗi lần nhập'}), 400
-
-    remote_rows, warning = _load_comment_logs_from_supabase('', limit=5000)
-    if warning:
-        return jsonify({'ok': False, 'error': f'Không đọc được lịch sử Supabase đích: {warning}'}), 502
-    staff_by_username = {
-        str(item.get('username') or '').strip().lower(): item
-        for item in _staff_accounts()
-        if str(item.get('username') or '').strip()
-    }
-    existing_keys = {_comment_log_identity(item) for item in remote_rows}
-    imported_rows: list[dict] = []
-    skipped = 0
-    failed = 0
-    errors: list[str] = []
-    for raw in source_rows:
-        row = _normalise_imported_comment_log(raw, staff_by_username)
-        if not row:
-            failed += 1
-            continue
-        key = _comment_log_identity(row)
-        if key in existing_keys:
-            skipped += 1
-            continue
-        ok, error = _save_comment_log_to_supabase(row)
-        if not ok:
-            failed += 1
-            if error and error not in errors:
-                errors.append(error)
-            continue
-        existing_keys.add(key)
-        imported_rows.append(row)
-
-    if imported_rows:
-        _comment_logs = _merge_comment_log_rows(_comment_logs, imported_rows, limit=5000)
-    payload = {
-        'ok': failed == 0,
-        'imported': len(imported_rows),
-        'skipped': skipped,
-        'failed': failed,
-    }
-    if errors:
-        payload['error'] = '; '.join(errors[:3])
-    return jsonify(payload), (200 if failed == 0 else 207)
-
-
-@app.route('/api/comment-leads/reconcile', methods=['POST'])
-def comment_leads_reconcile():
-    if not _is_admin():
-        return jsonify({'ok': False, 'error': 'Chỉ admin được đối soát Lead'}), 403
-    logs, log_warning = _load_comment_logs_from_supabase('', limit=5000)
-    if log_warning:
-        return jsonify({'ok': False, 'error': f'Không đọc được lịch sử comment: {log_warning}'}), 502
-    existing_leads, lead_warning = _load_leads_from_supabase(limit=5000)
-    if lead_warning:
-        return jsonify({'ok': False, 'error': f'Không đọc được Lead hiện tại: {lead_warning}'}), 502
-    result, error = _reconcile_commented_post_leads(logs, existing_leads)
-    if error:
-        result['error'] = error
-    return jsonify(result), (200 if result.get('ok') else 502)
-
-
-@app.route('/api/leads/sync-fsolution', methods=['POST'])
-def sync_leads_to_fsolution():
-    if not _is_admin():
-        return jsonify({'ok': False, 'error': 'Chỉ admin được đồng bộ Lead'}), 403
-    if not _flow_lead_sync_enabled():
-        return jsonify({
-            'ok': False,
-            'error': 'Chưa cấu hình database Lead của F-Solution',
-        }), 503
-    rows, source_error = _load_all_supabase_lead_rows()
-    if source_error:
-        return jsonify({'ok': False, 'error': f'Không đọc được Lead Sale: {source_error}'}), 502
-    ok, error, synced = _sync_lead_rows_to_flow(rows)
-    payload = {
-        'ok': ok,
-        'source_count': len(rows),
-        'synced_count': synced,
-        'target_project': urlsplit(FLOW_SUPABASE_URL).netloc.split('.')[0],
-    }
-    if error:
-        payload['error'] = error
-    return jsonify(payload), (200 if ok else 502)
+        staff_id = _current_staff_id()
+        rows = [item for item in _comment_logs if item.get('staff_id') == staff_id]
+    else:
+        rows = _comment_logs
+    return jsonify(rows[-200:])
 
 
 @app.route('/api/comment-stats/today', methods=['GET'])
@@ -7817,22 +6752,7 @@ def send_tiktok_comment():
         or payload.get('comment_id')
         or uuid.uuid4().hex
     )
-    log = _record_comment_log(
-        final_post_id,
-        'tiktok',
-        final_url,
-        message,
-        'tiktok',
-        'success',
-        comment_id=f'tiktok_{comment_id}',
-        lead_context={
-            'platform': 'tiktok',
-            'customer_name': body.get('customer_name') or body.get('author_name') or body.get('channel_name'),
-            'customer_need': body.get('customer_need') or body.get('comment_text') or body.get('video_title'),
-            'video_title': body.get('video_title'),
-            'channel_name': body.get('channel_name'),
-        },
-    )
+    log = _record_comment_log(final_post_id, 'tiktok', final_url, message, 'tiktok', 'success', comment_id=f'tiktok_{comment_id}')
     staff = _current_staff()
     now = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
     rows = [{
@@ -8560,56 +7480,6 @@ def _merged_facebook_groups() -> list[dict]:
     return list(by_id.values())
 
 
-def _legacy_group_channel_id(group_id: str) -> str:
-    digest = hashlib.sha1(str(group_id or '').encode('utf-8')).hexdigest()[:12]
-    return f'legacy-{digest}'
-
-
-def _restore_legacy_groups_to_managed_channels() -> tuple[int, str]:
-    """Migrate groups saved in the legacy groups table into managed_channels.
-
-    Vercel storage is ephemeral, so displaying only managed_channels can make
-    older groups appear lost after a deployment even though they still exist
-    in Supabase's legacy groups table.
-    """
-    global _managed_channels
-    existing_targets = {
-        str(item.get('target_id') or '').strip()
-        for item in _managed_channels
-        if str(item.get('platform') or '').strip().lower() == 'facebook'
-        and str(item.get('channel_type') or '').strip().lower() in ('nhóm', 'nhom', 'group')
-        and str(item.get('target_id') or '').strip()
-    }
-    now = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
-    added = 0
-    warning = ''
-    for group in _groups:
-        group_id = str(group.get('id') or '').strip()
-        if not group_id or group_id in existing_targets:
-            continue
-        group_name = str(group.get('name') or '').strip()[:160]
-        row = {
-            'id': _legacy_group_channel_id(group_id),
-            'platform': 'Facebook',
-            'channel_name': group_name or f'Nhóm Facebook {group_id}',
-            'channel_type': 'Nhóm',
-            'link': f'https://www.facebook.com/groups/{group_id}',
-            'target_id': group_id,
-            'note': 'Khôi phục từ danh sách nhóm đã lưu trước đây',
-            'created_at': now,
-            'updated_at': now,
-        }
-        if USE_SUPABASE:
-            row, row_warning = _sync_managed_channel_supabase(row)
-            warning = _append_warning(warning, row_warning)
-        _managed_channels.append(row)
-        existing_targets.add(group_id)
-        added += 1
-    if added:
-        _save_managed_channels()
-    return added, warning
-
-
 def _refresh_managed_channels_from_supabase(*, force: bool = False) -> None:
     global _managed_channels, _managed_channels_remote_at
     if not USE_SUPABASE:
@@ -8639,23 +7509,13 @@ def _visible_managed_channels() -> list[dict]:
 @app.route('/api/channels', methods=['GET'])
 def channels_get():
     _refresh_managed_channels_from_supabase()
-    restored, warning = _restore_legacy_groups_to_managed_channels()
-    payload = {
-        'ok': True,
-        'channels': _visible_managed_channels(),
-        'can_assign_staff': _is_admin(),
-        'restored_groups': restored,
-    }
-    if warning:
-        payload['warning'] = warning
-    return jsonify(payload)
+    return jsonify({'ok': True, 'channels': _visible_managed_channels(), 'can_assign_staff': _is_admin()})
 
 
 @app.route('/api/channels/publish-targets', methods=['GET'])
 def channels_publish_targets():
     """Nhóm/Page đăng bài — chỉ lấy từ bảng managed_channels (Supabase)."""
     _refresh_managed_channels_from_supabase()
-    _restore_legacy_groups_to_managed_channels()
     visible = _filter_managed_channels_for_staff(_managed_channels)
     groups = _facebook_group_channels(visible)
     pages = _facebook_page_channels(visible)
@@ -8929,7 +7789,6 @@ def tg_remove(chat_id):
 def groups_get():
     """Danh sách nhóm Facebook — chỉ từ bảng managed_channels (/kenh), lọc theo nhân sự."""
     _refresh_managed_channels_from_supabase()
-    _restore_legacy_groups_to_managed_channels()
     visible = _filter_managed_channels_for_staff(_managed_channels)
     return jsonify(_facebook_group_channels(visible))
 
@@ -9085,7 +7944,6 @@ def staff_cookies_save():
         facebook_cookies, cookie_warning = _sanitize_staff_cookie_rows(facebook_cookies)
         facebook_cookies = _prepare_staff_facebook_cookies_for_save(facebook_cookies, fetch_names=False)
         cookie = _primary_staff_cookie({'facebook_cookies': facebook_cookies, 'cookie': ''})
-        active_cookie_id = str(facebook_cookies[0].get('id') or '') if facebook_cookies else ''
         if not name:
             return jsonify({'ok': False, 'error': 'Thiếu tên nhân sự'}), 400
         if not username:
@@ -9119,7 +7977,6 @@ def staff_cookies_save():
             'facebook_user_id': _extract_cookie_user(cookie),
             'managed_groups': managed_groups,
             'facebook_cookies': facebook_cookies,
-            'active_cookie_id': active_cookie_id,
             'enabled': True,
         }
         write_warning = ''
@@ -9167,7 +8024,6 @@ def staff_cookies_save():
             'role': 'staff',
             'managed_groups': managed_groups,
             'facebook_cookies': facebook_cookies,
-            'active_cookie_id': active_cookie_id,
             'enabled': True,
             'created_at': now,
             'updated_at': now,
@@ -9176,7 +8032,7 @@ def staff_cookies_save():
         if not _staff_cookies.get('active_staff_id'):
             _staff_cookies['active_staff_id'] = saved_id
         _save_staff_cookies()
-        _invalidate_facebook_cache(saved_id)
+        _invalidate_facebook_cache()
         _schedule_staff_cookie_name_refresh(saved_id, facebook_cookies)
         staff_rows, warning = _staff_list_after_change()
         warnings = [part for part in [warning, write_warning, cookie_warning] if part]
@@ -9230,27 +8086,8 @@ def staff_cookies_update(staff_id):
         incoming_cookies = [{'id': 'primary', 'label': 'Cookie chính', 'cookie': body.get('cookie', '')}]
     facebook_cookies = _merge_staff_facebook_cookies(incoming_cookies, target)
     facebook_cookies, cookie_warning = _sanitize_staff_cookie_rows(facebook_cookies)
-    # Save the cookie immediately. Facebook name lookup runs in the background
-    # below; blocking this request makes the UI look like the update failed.
-    facebook_cookies = _prepare_staff_facebook_cookies_for_save(facebook_cookies, fetch_names=False)
-    active_cookie_id = str(target.get('active_cookie_id') or '').strip()
-    if not any(str(item.get('id') or '') == active_cookie_id for item in facebook_cookies):
-        active_cookie_id = str(
-            next(
-                (
-                    item.get('id')
-                    for item in facebook_cookies
-                    if item.get('cookie') == str(target.get('cookie') or '').strip()
-                ),
-                facebook_cookies[0].get('id') if facebook_cookies else '',
-            )
-            or ''
-        )
-    cookie = _primary_staff_cookie({
-        'facebook_cookies': facebook_cookies,
-        'active_cookie_id': active_cookie_id,
-        'cookie': target.get('cookie', ''),
-    })
+    facebook_cookies = _prepare_staff_facebook_cookies_for_save(facebook_cookies, fetch_names=True)
+    cookie = _primary_staff_cookie({'facebook_cookies': facebook_cookies, 'cookie': target.get('cookie', '')})
 
     if not self_service:
         if not name:
@@ -9278,7 +8115,6 @@ def staff_cookies_update(staff_id):
         'role': target.get('role') or 'staff',
         'managed_groups': managed_groups,
         'facebook_cookies': facebook_cookies,
-        'active_cookie_id': active_cookie_id,
         'cookie': cookie,
         'facebook_user_id': _extract_cookie_user(cookie),
         'enabled': True,
@@ -9314,7 +8150,6 @@ def staff_cookies_update(staff_id):
         local_target['role'] = target.get('role') or local_target.get('role') or 'staff'
         local_target['managed_groups'] = managed_groups
         local_target['facebook_cookies'] = facebook_cookies
-        local_target['active_cookie_id'] = active_cookie_id
         local_target['cookie'] = cookie
         local_target['facebook_user_id'] = _extract_cookie_user(cookie)
         local_target['updated_at'] = now
@@ -9330,7 +8165,6 @@ def staff_cookies_update(staff_id):
             'role': target.get('role') or 'staff',
             'managed_groups': managed_groups,
             'facebook_cookies': facebook_cookies,
-            'active_cookie_id': active_cookie_id,
             'cookie': cookie,
             'facebook_user_id': _extract_cookie_user(cookie),
             'enabled': True,
@@ -9344,7 +8178,7 @@ def staff_cookies_update(staff_id):
         staff.append(local_row)
 
     _save_staff_cookies()
-    _invalidate_facebook_cache(staff_id)
+    _invalidate_facebook_cache()
     _schedule_staff_cookie_name_refresh(staff_id, facebook_cookies)
 
     if staff_id == _current_staff_id():
@@ -9357,7 +8191,6 @@ def staff_cookies_update(staff_id):
         }
         refreshed_staff['cookie'] = cookie
         refreshed_staff['facebook_cookies'] = facebook_cookies
-        refreshed_staff['active_cookie_id'] = active_cookie_id
         refreshed_staff['facebook_user_id'] = _extract_cookie_user(cookie)
         _set_logged_in_staff(refreshed_staff)
 
@@ -9482,59 +8315,57 @@ def _app_kv_storage_warning(exc: Exception) -> str:
     return message
 
 
-def _content_ai_settings_key() -> str:
-    return _current_staff_ai_key() or 'default'
-
-
-def _load_content_ai_row() -> tuple[dict | None, str]:
-    if not USE_SUPABASE:
-        return None, ''
-    try:
-        return sb.get_customer_ai_settings(_content_ai_settings_key(), SUPABASE_CUSTOMER_AI_TABLE), ''
-    except Exception as e:
-        return None, str(e)[:300]
-
-
-def _save_content_ai_row(payload: dict) -> tuple[bool, str]:
-    if not USE_SUPABASE:
-        return False, 'Chưa cấu hình Supabase'
-    staff = _current_staff()
-    staff_key = _content_ai_settings_key()
-    try:
-        sb.upsert_customer_ai_settings({
-            'staff_key': staff_key,
-            'staff_id': str(staff.get('id') or '') if staff_key != 'default' else '',
-            'username': str(staff.get('username') or '') if staff_key != 'default' else '',
-            'customer_name': str(staff.get('name') or staff.get('username') or '') if staff_key != 'default' else 'Default',
-            **payload,
-        }, SUPABASE_CUSTOMER_AI_TABLE)
-        return True, ''
-    except Exception as e:
-        return False, str(e)[:300]
-
-
 def _load_content_studio_setup() -> tuple[dict, str, str]:
     local = _clean_content_studio_setup(_read_json(CONTENT_STUDIO_SETUP_FILE, _default_content_studio_setup()))
-    row, warning = _load_content_ai_row()
-    if row and isinstance(row.get('content_setup'), dict):
-        setup = _clean_content_studio_setup(row.get('content_setup'))
-        _write_json(CONTENT_STUDIO_SETUP_FILE, setup)
-        return setup, 'supabase', ''
-    if warning:
-        return local, 'local', f'Supabase chưa đọc được cấu hình prompt theo user. {warning} ({_supabase_debug_context(SUPABASE_CUSTOMER_AI_TABLE)})'
+    staff_key = _current_staff_ai_key()
+    if USE_SUPABASE and staff_key:
+        try:
+            row = sb.get_customer_ai_settings(staff_key, SUPABASE_CUSTOMER_AI_TABLE)
+            if row and isinstance(row.get('content_setup'), dict):
+                setup = _clean_content_studio_setup(row.get('content_setup'))
+                _write_json(CONTENT_STUDIO_SETUP_FILE, setup)
+                return setup, 'supabase', ''
+        except Exception as e:
+            return local, 'local', f'Supabase chưa đọc được cấu hình prompt theo user. {str(e)[:300]} ({_supabase_debug_context(SUPABASE_CUSTOMER_AI_TABLE)})'
+    if not USE_SUPABASE:
+        return local, 'local', ''
+    try:
+        remote = sb.kv_get(CONTENT_STUDIO_SETUP_KV, None)
+        if remote:
+            setup = _clean_content_studio_setup(remote)
+            _write_json(CONTENT_STUDIO_SETUP_FILE, setup)
+            return setup, 'supabase', ''
+    except Exception as e:
+        return local, 'local', _app_kv_storage_warning(e)
     return local, 'local', ''
 
 
 def _save_content_studio_setup(setup: dict) -> tuple[str, str]:
     cleaned = _clean_content_studio_setup(setup)
     _write_json(CONTENT_STUDIO_SETUP_FILE, cleaned)
-    ok, warning = _save_content_ai_row({'content_setup': cleaned})
-    if ok:
-        return 'supabase', ''
-    if warning:
-        if 'PGRST204' in warning or 'content_setup' in warning:
-            return 'local', f'{CUSTOMER_AI_CONTENT_SETUP_HINT} Chi tiết: {warning} ({_supabase_debug_context(SUPABASE_CUSTOMER_AI_TABLE)})'
-        return 'local', f'Supabase chưa ghi được cấu hình prompt theo user: {warning} ({_supabase_debug_context(SUPABASE_CUSTOMER_AI_TABLE)})'
+    staff_key = _current_staff_ai_key()
+    if USE_SUPABASE and staff_key:
+        staff = _current_staff()
+        try:
+            sb.upsert_customer_ai_settings({
+                'staff_key': staff_key,
+                'staff_id': str(staff.get('id') or ''),
+                'username': str(staff.get('username') or ''),
+                'customer_name': str(staff.get('name') or staff.get('username') or ''),
+                'content_setup': cleaned,
+            }, SUPABASE_CUSTOMER_AI_TABLE)
+            return 'supabase', ''
+        except Exception as e:
+            message = str(e)[:300]
+            if 'PGRST204' in message or 'content_setup' in message:
+                return 'local', f'{CUSTOMER_AI_CONTENT_SETUP_HINT} Chi tiết: {message} ({_supabase_debug_context(SUPABASE_CUSTOMER_AI_TABLE)})'
+            return 'local', f'Supabase chưa ghi được cấu hình prompt theo user: {message} ({_supabase_debug_context(SUPABASE_CUSTOMER_AI_TABLE)})'
+    if USE_SUPABASE:
+        try:
+            sb.kv_set(CONTENT_STUDIO_SETUP_KV, cleaned)
+            return 'supabase', ''
+        except Exception as e:
+            return 'local', _app_kv_storage_warning(e)
     return 'local', ''
 
 
@@ -9574,56 +8405,58 @@ def _clean_content_techniques(rows) -> list[dict]:
     return cleaned
 
 
-def _ensure_system_content_techniques(rows: list[dict]) -> tuple[list[dict], bool]:
-    defaults = _default_content_techniques()
-    existing_names = {str(item.get('name') or '').strip().lower() for item in rows if str(item.get('name') or '').strip()}
-    existing_ids = {str(item.get('id') or '').strip().lower() for item in rows if str(item.get('id') or '').strip()}
-    merged = list(rows)
-    changed = False
-    for default in defaults:
-        name_key = str(default.get('name') or '').strip().lower()
-        id_key = str(default.get('id') or '').strip().lower()
-        if name_key in existing_names or id_key in existing_ids:
-            continue
-        merged.append(dict(default))
-        changed = True
-    if not merged:
-        merged = [dict(item) for item in defaults]
-        changed = True
-    return _clean_content_techniques(merged), changed
-
-
 def _load_content_techniques() -> tuple[list[dict], str, str]:
     local_raw = _read_json(CONTENT_TECHNIQUES_FILE, None)
-    local = _clean_content_techniques(local_raw if isinstance(local_raw, list) else [])
-    row, warning = _load_content_ai_row()
-    storage = 'local'
-    rows = local
-    if row and isinstance(row.get('content_techniques'), list):
-        rows = _clean_content_techniques(row.get('content_techniques'))
-        storage = 'supabase'
-    rows, seeded = _ensure_system_content_techniques(rows)
-    if seeded:
-        storage, save_warning = _save_content_techniques(rows)
-        seed_note = 'Đã tự thêm kỹ thuật marketing mặc định (PAS, AIDA, BAB, Storytelling, Social Proof).'
-        if save_warning:
-            return rows, storage, f'{seed_note} {save_warning}'
-        return rows, storage, seed_note
-    if warning:
-        return rows, storage, f'Supabase chưa đọc được kỹ thuật content theo user. {warning} ({_supabase_debug_context(SUPABASE_CUSTOMER_AI_TABLE)})'
-    return rows, storage, ''
+    local = _clean_content_techniques(local_raw if isinstance(local_raw, list) else _default_content_techniques())
+    staff_key = _current_staff_ai_key()
+    if USE_SUPABASE and staff_key:
+        try:
+            row = sb.get_customer_ai_settings(staff_key, SUPABASE_CUSTOMER_AI_TABLE)
+            if row and isinstance(row.get('content_techniques'), list):
+                rows = _clean_content_techniques(row.get('content_techniques'))
+                _write_json(CONTENT_TECHNIQUES_FILE, rows)
+                return rows, 'supabase', ''
+        except Exception as e:
+            return local, 'local', f'Supabase chưa đọc được kỹ thuật content theo user. {str(e)[:300]} ({_supabase_debug_context(SUPABASE_CUSTOMER_AI_TABLE)})'
+    if not USE_SUPABASE:
+        return local, 'local', ''
+    try:
+        remote = sb.kv_get(CONTENT_TECHNIQUES_KV, None)
+        if isinstance(remote, list):
+            rows = _clean_content_techniques(remote)
+            _write_json(CONTENT_TECHNIQUES_FILE, rows)
+            return rows, 'supabase', ''
+    except Exception as e:
+        return local, 'local', _app_kv_storage_warning(e)
+    return local, 'local', ''
 
 
 def _save_content_techniques(rows: list[dict]) -> tuple[str, str]:
     cleaned = _clean_content_techniques(rows)
     _write_json(CONTENT_TECHNIQUES_FILE, cleaned)
-    ok, warning = _save_content_ai_row({'content_techniques': cleaned})
-    if ok:
-        return 'supabase', ''
-    if warning:
-        if 'PGRST204' in warning or 'content_techniques' in warning:
-            return 'local', f'{CUSTOMER_AI_CONTENT_TECHNIQUES_HINT} Chi tiết: {warning} ({_supabase_debug_context(SUPABASE_CUSTOMER_AI_TABLE)})'
-        return 'local', f'Supabase chưa ghi được kỹ thuật content theo user: {warning} ({_supabase_debug_context(SUPABASE_CUSTOMER_AI_TABLE)})'
+    staff_key = _current_staff_ai_key()
+    if USE_SUPABASE and staff_key:
+        staff = _current_staff()
+        try:
+            sb.upsert_customer_ai_settings({
+                'staff_key': staff_key,
+                'staff_id': str(staff.get('id') or ''),
+                'username': str(staff.get('username') or ''),
+                'customer_name': str(staff.get('name') or staff.get('username') or ''),
+                'content_techniques': cleaned,
+            }, SUPABASE_CUSTOMER_AI_TABLE)
+            return 'supabase', ''
+        except Exception as e:
+            message = str(e)[:300]
+            if 'PGRST204' in message or 'content_techniques' in message:
+                return 'local', f'{CUSTOMER_AI_CONTENT_TECHNIQUES_HINT} Chi tiết: {message} ({_supabase_debug_context(SUPABASE_CUSTOMER_AI_TABLE)})'
+            return 'local', f'Supabase chưa ghi được kỹ thuật content theo user: {message} ({_supabase_debug_context(SUPABASE_CUSTOMER_AI_TABLE)})'
+    if USE_SUPABASE:
+        try:
+            sb.kv_set(CONTENT_TECHNIQUES_KV, cleaned)
+            return 'supabase', ''
+        except Exception as e:
+            return 'local', _app_kv_storage_warning(e)
     return 'local', ''
 
 
@@ -9961,15 +8794,11 @@ def _clean_script_library(rows) -> list[dict]:
             block_type = str(raw_block.get('type') or 'text').strip().lower()
             if not block_id:
                 continue
-            block_row = {
+            blocks.append({
                 'id': block_id,
                 'type': block_type if block_type in allowed_block_types else 'text',
                 'text': str(raw_block.get('text') or '')[:50000],
-            }
-            align = str(raw_block.get('align') or '').strip().lower()
-            if align in {'left', 'center', 'right', 'justify'}:
-                block_row['align'] = align
-            blocks.append(block_row)
+            })
         status = str(raw.get('status') or 'draft').strip().lower()
         cleaned.append({
             'id': script_id,
@@ -10052,35 +8881,6 @@ def _workflow_status_from_task(raw: dict) -> str:
     return PLAN_COL_TO_WORKFLOW_STATUS.get(col, 'todo')
 
 
-def _script_status_from_task(task: dict) -> str:
-    workflow_status = str(task.get('status') or 'todo').strip().lower()
-    if task.get('approved_at') or workflow_status in {'approved', 'archived'}:
-        return 'approved'
-    return WORKFLOW_TO_SCRIPT_STATUS.get(workflow_status, 'draft')
-
-
-def _apply_legacy_script_statuses(scripts: list[dict]) -> list[dict]:
-    if not USE_SUPABASE or not scripts:
-        return scripts
-    try:
-        legacy_rows = sb.list_content_scripts(SUPABASE_SCRIPT_TABLE)
-    except Exception:
-        return scripts
-    legacy_by_id = {str(row.get('id') or ''): row for row in legacy_rows}
-    for script in scripts:
-        legacy = legacy_by_id.get(script['id'])
-        if legacy and str(legacy.get('status') or '').strip().lower() == 'approved':
-            script['status'] = 'approved'
-    return scripts
-
-
-def _filter_scripts_by_status(rows: list[dict], status: str) -> list[dict]:
-    wanted = str(status or '').strip().lower()
-    if not wanted:
-        return rows
-    return [row for row in rows if str(row.get('status') or '').strip().lower() == wanted]
-
-
 def _workflow_status_from_script(status: str, existing: dict | None = None) -> str:
     current = str((existing or {}).get('status') or '').strip().lower()
     if status == 'draft' and current in {'todo', 'doing'}:
@@ -10137,7 +8937,7 @@ def _clean_content_tasks(rows) -> list[dict]:
     return cleaned
 
 
-def _public_content_task(row: dict, *, lite: bool = False) -> dict:
+def _public_content_task(row: dict) -> dict:
     status = str(row.get('status') or 'todo').strip().lower()
     if status not in WORKFLOW_STATUSES:
         status = 'todo'
@@ -10147,7 +8947,7 @@ def _public_content_task(row: dict, *, lite: bool = False) -> dict:
     assignee = str(row.get('assignee_name') or '').strip()
     color_seed = abs(hash(assignee or row.get('id') or 'task')) % 5
     colors = ['#7C6CF0', '#3B82F6', '#10B981', '#F59E0B', '#EF4444']
-    payload = {
+    return {
         'id': row.get('id'),
         'col': WORKFLOW_STATUS_TO_PLAN_COL.get(status, 0),
         'status': status,
@@ -10162,6 +8962,8 @@ def _public_content_task(row: dict, *, lite: bool = False) -> dict:
         'color': row.get('color') or colors[color_seed],
         'script_id': row.get('script_id') or '',
         'platform': row.get('platform') or 'TikTok',
+        'notes': _safe_json_list(row.get('notes')),
+        'timeline': _safe_json_list(row.get('timeline')),
         'created_at': row.get('created_at') or '',
         'updated_at': row.get('updated_at') or '',
         'started_at': row.get('started_at') or '',
@@ -10169,13 +8971,6 @@ def _public_content_task(row: dict, *, lite: bool = False) -> dict:
         'approved_at': row.get('approved_at') or '',
         'completed_at': row.get('completed_at') or '',
     }
-    if lite:
-        payload['notes'] = []
-        payload['timeline'] = []
-    else:
-        payload['notes'] = _safe_json_list(row.get('notes'))
-        payload['timeline'] = _safe_json_list(row.get('timeline'))
-    return payload
 
 
 def _filter_content_tasks_for_current_staff(rows: list[dict]) -> list[dict]:
@@ -10227,16 +9022,10 @@ def _task_db_payload(task: dict, existing: dict | None = None) -> dict:
         'created_by_staff_name': existing.get('created_by_staff_name') or staff.get('name') or staff.get('username') or None,
         'created_at': existing.get('created_at') or now,
         'updated_at': now,
-        'started_at': existing.get('started_at') or None,
-        'submitted_at': existing.get('submitted_at') or None,
-        'approved_at': existing.get('approved_at') or None,
-        'completed_at': existing.get('completed_at') or None,
-        'archived_at': existing.get('archived_at') or None,
-        'approved_by_staff_id': existing.get('approved_by_staff_id') or None,
-        'approved_by_staff_name': existing.get('approved_by_staff_name') or None,
     }
     for field in ('started_at', 'submitted_at', 'approved_at', 'completed_at', 'archived_at', 'approved_by_staff_id', 'approved_by_staff_name'):
-        payload[field] = task.get(field) or existing.get(field) or payload[field]
+        if task.get(field) or existing.get(field):
+            payload[field] = task.get(field) or existing.get(field)
     return payload
 
 
@@ -10272,13 +9061,6 @@ def _script_db_payload_from_script(script: dict, existing_task: dict | None = No
         'created_by_staff_name': (existing_task or {}).get('created_by_staff_name') or staff.get('name') or staff.get('username') or None,
         'created_at': (existing_task or {}).get('created_at') or now,
         'updated_at': now,
-        'started_at': (existing_task or {}).get('started_at') or None,
-        'submitted_at': (existing_task or {}).get('submitted_at') or None,
-        'approved_at': (existing_task or {}).get('approved_at') or None,
-        'completed_at': (existing_task or {}).get('completed_at') or None,
-        'archived_at': (existing_task or {}).get('archived_at') or None,
-        'approved_by_staff_id': (existing_task or {}).get('approved_by_staff_id') or None,
-        'approved_by_staff_name': (existing_task or {}).get('approved_by_staff_name') or None,
     }
     if status == 'doing':
         task['started_at'] = (existing_task or {}).get('started_at') or now
@@ -10308,100 +9090,6 @@ def _script_db_payload_from_script(script: dict, existing_task: dict | None = No
     return task, blocks
 
 
-def _is_workflow_script_task(row: dict) -> bool:
-    task_id = str(row.get('id') or '').strip()
-    script_id = str(row.get('script_id') or '').strip()
-    return bool(script_id) and task_id == f'task-{script_id}'
-
-
-def _plan_visible_tasks(rows: list[dict]) -> list[dict]:
-    """Hide internal script workflow rows from the user-facing planning board."""
-    return [row for row in (rows or []) if not _is_workflow_script_task(row)]
-
-
-def _plan_board_tasks(rows: list[dict]) -> list[dict]:
-    """Plan tasks for the kanban board; fall back to workflow rows when no plan rows exist."""
-    cleaned = _clean_content_tasks(rows)
-    plan = _plan_visible_tasks(cleaned)
-    if plan:
-        return plan
-    return [row for row in cleaned if _is_workflow_script_task(row)]
-
-
-def _plan_task_ids_by_script(tasks: list[dict]) -> dict[str, str]:
-    plan_by_script: dict[str, str] = {}
-    for task in tasks or []:
-        script_id = str(task.get('script_id') or '').strip()
-        task_id = str(task.get('id') or '').strip()
-        if not script_id or not task_id:
-            continue
-        if _is_workflow_script_task(task):
-            plan_by_script.setdefault(script_id, task_id)
-            continue
-        plan_by_script[script_id] = task_id
-    return plan_by_script
-
-
-def _attach_plan_links_to_scripts(scripts: list[dict], tasks: list[dict]) -> list[dict]:
-    plan_by_script = _plan_task_ids_by_script(tasks)
-    plan_titles: dict[str, str] = {}
-    for task in tasks or []:
-        script_id = str(task.get('script_id') or '').strip()
-        task_id = str(task.get('id') or '').strip()
-        if script_id and task_id == plan_by_script.get(script_id):
-            plan_titles[script_id] = str(task.get('title') or '').strip()
-    for script in scripts:
-        script_id = str(script.get('id') or '').strip()
-        plan_task_id = plan_by_script.get(script_id)
-        if plan_task_id:
-            script['plan_task_id'] = plan_task_id
-            if plan_titles.get(script_id):
-                script['plan_task_title'] = plan_titles[script_id]
-    return scripts
-
-
-def _sync_plan_tasks_from_scripts(plan_tasks: list[dict], scripts: list[dict]) -> list[dict]:
-    scripts_by_id = {str(script.get('id') or ''): script for script in scripts if str(script.get('id') or '').strip()}
-    staff = _current_staff()
-    synced: list[dict] = []
-    for row in plan_tasks:
-        task = dict(row)
-        script_id = str(task.get('script_id') or '').strip()
-        script = scripts_by_id.get(script_id)
-        if not script:
-            synced.append(task)
-            continue
-        script_status = str(script.get('status') or 'draft').strip().lower()
-        new_status = SCRIPT_TO_WORKFLOW_STATUS.get(script_status, 'doing')
-        old_status = str(task.get('status') or '').strip().lower()
-        if new_status != old_status:
-            task['status'] = new_status
-            timeline = _safe_json_list(task.get('timeline'))
-            now = _workflow_now()
-            if new_status == 'doing' and not task.get('started_at'):
-                task['started_at'] = now
-                if old_status in {'', 'todo'}:
-                    timeline.append(_workflow_event('started', 'Bắt đầu làm từ kịch bản', staff))
-            if new_status == 'pending' and old_status != 'pending':
-                task['started_at'] = task.get('started_at') or now
-                task['submitted_at'] = task.get('submitted_at') or now
-                timeline.append(_workflow_event('submitted', 'Gửi duyệt từ kịch bản', staff))
-            if new_status == 'approved' and old_status != 'approved':
-                task['started_at'] = task.get('started_at') or now
-                task['submitted_at'] = task.get('submitted_at') or now
-                task['approved_at'] = task.get('approved_at') or now
-                task['completed_at'] = task.get('completed_at') or now
-                task['approved_by_staff_id'] = staff.get('id') or None
-                task['approved_by_staff_name'] = staff.get('name') or staff.get('username') or None
-                timeline.append(_workflow_event('approved', 'Duyệt từ kịch bản', staff))
-            task['timeline'] = timeline[-100:]
-        writer = str(script.get('writer') or '').strip()
-        if writer:
-            task['assignee_name'] = writer
-        synced.append(task)
-    return synced
-
-
 def _scripts_from_workflow_rows(tasks: list[dict], blocks: list[dict]) -> list[dict]:
     by_script: dict[str, list[dict]] = {}
     for block in blocks or []:
@@ -10409,17 +9097,17 @@ def _scripts_from_workflow_rows(tasks: list[dict], blocks: list[dict]) -> list[d
         if not script_id:
             continue
         by_script.setdefault(script_id, []).append(block)
-    scripts_by_id: dict[str, dict] = {}
+    scripts = []
     for task in tasks or []:
         script_id = str(task.get('script_id') or '').strip()
         if not script_id:
             continue
         rows = sorted(by_script.get(script_id, []), key=lambda item: int(item.get('block_order') or 0))
-        entry = {
+        scripts.append({
             'id': script_id,
             'title': task.get('title') or '',
             'platform': task.get('platform') or 'TikTok',
-            'status': _script_status_from_task(task),
+            'status': WORKFLOW_TO_SCRIPT_STATUS.get(str(task.get('status') or 'todo'), 'draft'),
             'writer': task.get('assignee_name') or '',
             'date': task.get('due_date') or '',
             'blocks': [{
@@ -10428,55 +9116,8 @@ def _scripts_from_workflow_rows(tasks: list[dict], blocks: list[dict]) -> list[d
                 'text': row.get('content') or '',
                 **({'align': (row.get('metadata') or {}).get('align')} if isinstance(row.get('metadata'), dict) and (row.get('metadata') or {}).get('align') else {}),
             } for idx, row in enumerate(rows)],
-        }
-        existing = scripts_by_id.get(script_id)
-        if not existing:
-            scripts_by_id[script_id] = entry
-            continue
-        task_is_workflow = str(task.get('id') or '') == f'task-{script_id}'
-        existing_is_workflow = str(existing.get('_task_id') or '') == f'task-{script_id}'
-        if task_is_workflow and not existing_is_workflow:
-            entry['_task_id'] = str(task.get('id') or '')
-            scripts_by_id[script_id] = entry
-        elif len(entry['blocks']) > len(existing.get('blocks') or []):
-            entry['_task_id'] = str(task.get('id') or '')
-            scripts_by_id[script_id] = entry
-    cleaned = []
-    for script in scripts_by_id.values():
-        script.pop('_task_id', None)
-        cleaned.append(script)
-    return _clean_script_library(cleaned)
-
-
-def _scripts_lite_from_tasks(tasks: list[dict]) -> list[dict]:
-    scripts_by_id: dict[str, dict] = {}
-    for task in tasks or []:
-        script_id = str(task.get('script_id') or '').strip()
-        if not script_id:
-            continue
-        entry = {
-            'id': script_id,
-            'title': task.get('title') or '',
-            'platform': task.get('platform') or 'TikTok',
-            'status': _script_status_from_task(task),
-            'writer': task.get('assignee_name') or '',
-            'date': task.get('due_date') or '',
-            'blocks': [],
-            '_task_id': str(task.get('id') or ''),
-        }
-        existing = scripts_by_id.get(script_id)
-        if not existing:
-            scripts_by_id[script_id] = entry
-            continue
-        task_is_workflow = str(task.get('id') or '') == f'task-{script_id}'
-        existing_is_workflow = str(existing.get('_task_id') or '') == f'task-{script_id}'
-        if task_is_workflow and not existing_is_workflow:
-            scripts_by_id[script_id] = entry
-    cleaned = []
-    for script in scripts_by_id.values():
-        script.pop('_task_id', None)
-        cleaned.append(script)
-    return _clean_script_library(cleaned)
+        })
+    return _clean_script_library(scripts)
 
 
 def _content_workflow_supabase_warning(exc: Exception) -> str:
@@ -10488,278 +9129,59 @@ def _content_workflow_supabase_warning(exc: Exception) -> str:
     return text[:500]
 
 
-WORKFLOW_READ_CACHE_SEC = 15
-_workflow_read_cache: dict[str, object] = {'tasks': None, 'blocks': None, 'ts': 0.0}
-
-
-def _invalidate_workflow_read_cache() -> None:
-    _workflow_read_cache['ts'] = 0.0
-    _workflow_read_cache['tasks'] = None
-    _workflow_read_cache['blocks'] = None
-
-
-def _cached_workflow_tasks(*, lite: bool = False, force: bool = False) -> list:
-    key = 'tasks_lite' if lite else 'tasks'
-    now = time_module.monotonic()
-    cached = _workflow_read_cache.get(key)
-    ts = float(_workflow_read_cache.get('ts') or 0.0)
-    if not force and isinstance(cached, list) and now - ts < WORKFLOW_READ_CACHE_SEC:
-        return cached
-    rows = sb.list_content_tasks(SUPABASE_CONTENT_TASK_TABLE, lite=lite)
-    _workflow_read_cache[key] = rows
-    if not lite:
-        _workflow_read_cache['tasks'] = rows
-    _workflow_read_cache['ts'] = now
-    return rows
-
-
-def _cached_workflow_blocks(*, force: bool = False) -> list:
-    now = time_module.monotonic()
-    cached = _workflow_read_cache.get('blocks')
-    ts = float(_workflow_read_cache.get('ts') or 0.0)
-    if not force and isinstance(cached, list) and now - ts < WORKFLOW_READ_CACHE_SEC:
-        return cached
-    rows = sb.list_content_script_blocks(SUPABASE_CONTENT_SCRIPT_BLOCK_TABLE)
-    _workflow_read_cache['blocks'] = rows
-    _workflow_read_cache['ts'] = now
-    return rows
-
-
 def _load_scripts_from_workflow_supabase() -> list[dict]:
-    tasks = _cached_workflow_tasks()
-    blocks = _cached_workflow_blocks()
-    scripts = _scripts_from_workflow_rows(tasks, blocks)
-    return _attach_plan_links_to_scripts(scripts, tasks)
+    tasks = _filter_content_tasks_for_current_staff(sb.list_content_tasks(SUPABASE_CONTENT_TASK_TABLE))
+    blocks = sb.list_content_script_blocks(SUPABASE_CONTENT_SCRIPT_BLOCK_TABLE)
+    return _scripts_from_workflow_rows(tasks, blocks)
 
 
-def _ensure_scripts_from_active_plan_tasks() -> None:
-    if not USE_SUPABASE:
-        return
-    try:
-        raw_tasks = _cached_workflow_tasks(lite=True)
-    except Exception:
-        return
-    plan_rows = [
-        _public_content_task(row, lite=True)
-        for row in raw_tasks
-        if not _is_workflow_script_task(row) and _workflow_status_from_task(row) in {'doing', 'pending'}
-    ]
-    if not plan_rows:
-        return
-    try:
-        existing_scripts = _load_scripts_from_workflow_supabase()
-    except Exception:
-        existing_scripts = _attach_plan_links_to_scripts(_scripts_lite_from_tasks(raw_tasks), raw_tasks)
-    updated_rows, new_scripts = _provision_scripts_for_active_plan_tasks(plan_rows, existing_scripts)
-    script_id_changed = any(
-        str(next_row.get('script_id') or '').strip() != str(prev_row.get('script_id') or '').strip()
-        for next_row, prev_row in zip(updated_rows, plan_rows)
-    )
-    if not new_scripts and not script_id_changed:
-        return
-    scripts_by_id = {
-        str(script.get('id') or ''): dict(script)
-        for script in existing_scripts
-        if str(script.get('id') or '').strip()
-    }
-    for script in new_scripts:
-        scripts_by_id[script['id']] = script
-    _save_scripts_to_workflow_supabase(
-        list(scripts_by_id.values()),
-        plan_provision_updates=updated_rows,
-    )
-
-
-def _script_id_for_plan_task(task: dict) -> str:
-    task_id = str(task.get('id') or '').strip()
-    if task_id.startswith('task-'):
-        return f'script-{task_id[5:]}'[:160]
-    compact = re.sub(r'[^0-9a-zA-Z]+', '-', task_id).strip('-').lower()
-    return (f'script-{compact}' if compact else f'script-{uuid.uuid4().hex[:12]}')[:160]
-
-
-def _script_status_from_workflow(status: str) -> str:
-    status = str(status or 'todo').strip().lower()
-    if status == 'approved':
-        return 'approved'
-    if status == 'pending':
-        return 'pending'
-    return 'draft'
-
-
-def _provision_scripts_for_active_plan_tasks(
-    rows: list[dict],
-    existing_scripts: list[dict] | None = None,
-    *,
-    recreate_missing: bool = False,
-) -> tuple[list[dict], list[dict]]:
-    scripts_by_id = {str(script.get('id') or ''): script for script in (existing_scripts or []) if str(script.get('id') or '').strip()}
-    updated_rows: list[dict] = []
-    new_scripts: list[dict] = []
-    for raw in rows:
-        row = dict(raw)
-        if _is_workflow_script_task(row):
-            updated_rows.append(row)
-            continue
-        status = _workflow_status_from_task(row)
-        script_id = str(row.get('script_id') or '').strip()
-        if not script_id:
-            script_id = _script_id_for_plan_task(row)
-            row['script_id'] = script_id
-        if script_id in scripts_by_id:
-            updated_rows.append(row)
-            continue
-        if recreate_missing or status in {'todo', 'doing', 'pending', 'approved'}:
-            script_status = _script_status_from_workflow(status)
-            script = {
-                'id': script_id,
-                'title': row.get('title') or 'Kịch bản',
-                'platform': row.get('platform') or 'TikTok',
-                'status': script_status,
-                'writer': str(row.get('assignee_name') or row.get('assignee') or '').strip(),
-                'date': str(row.get('due_date') or row.get('dl') or '').strip(),
-                'blocks': [{'id': f'{script_id}-block-0', 'type': 'hook', 'text': ''}],
-            }
-            new_scripts.append(script)
-            scripts_by_id[script_id] = script
-        updated_rows.append(row)
-    return updated_rows, new_scripts
-
-
-def _apply_script_provision_from_plan_tasks(rows: list[dict]) -> list[dict]:
-    if not USE_SUPABASE or not rows:
-        return rows
-    try:
-        existing_scripts = _load_scripts_from_workflow_supabase()
-    except Exception:
-        existing_scripts = []
-    updated_rows, new_scripts = _provision_scripts_for_active_plan_tasks(rows, existing_scripts, recreate_missing=True)
-    if not new_scripts:
-        return updated_rows
-    scripts_by_id = {str(script.get('id') or ''): script for script in existing_scripts if str(script.get('id') or '').strip()}
-    for script in new_scripts:
-        scripts_by_id.setdefault(script['id'], script)
-    _save_scripts_to_workflow_supabase(list(scripts_by_id.values()), plan_provision_updates=updated_rows)
-    return updated_rows
-
-
-def _save_scripts_to_workflow_supabase(rows: list[dict], *, plan_provision_updates: list[dict] | None = None) -> None:
+def _save_scripts_to_workflow_supabase(rows: list[dict]) -> None:
     existing_tasks = sb.list_content_tasks(SUPABASE_CONTENT_TASK_TABLE)
     by_script = {str(row.get('script_id') or ''): row for row in existing_tasks if row.get('script_id')}
     by_id = {str(row.get('id') or ''): row for row in existing_tasks if row.get('id')}
-    provision_by_id = {str(row.get('id') or ''): row for row in (plan_provision_updates or []) if str(row.get('id') or '').strip()}
-    kept_script_ids = {script['id'] for script in rows}
-    removed_script_ids = [
-        str(row.get('script_id') or '').strip()
-        for row in existing_tasks
-        if str(row.get('script_id') or '').strip() and str(row.get('script_id') or '').strip() not in kept_script_ids
-    ]
     task_rows = []
     block_rows = []
     script_ids = []
+    next_task_ids = set()
     for script in rows:
         existing = by_script.get(script['id']) or by_id.get(f'task-{script["id"]}') or {}
         task, blocks = _script_db_payload_from_script(script, existing)
         task_rows.append(task)
         block_rows.extend(blocks)
         script_ids.append(script['id'])
-    # Giữ task kế hoạch (id khác task kịch bản workflow), kể cả khi đã gắn script_id.
-    script_task_ids = {str(task_row.get('id') or '').strip() for task_row in task_rows if str(task_row.get('id') or '').strip()}
-    removed_script_ids_set = set(removed_script_ids)
-    merged_plan: list[dict] = []
-    for row in existing_tasks:
-        task_id = str(row.get('id') or '').strip()
-        script_id = str(row.get('script_id') or '').strip()
-        if not task_id or task_id in script_task_ids:
-            continue
-        if script_id in removed_script_ids_set and _is_workflow_script_task(row):
-            continue
-        task = dict(row)
-        if script_id in removed_script_ids_set:
-            task['script_id'] = None
-            if _workflow_status_from_task(task) in {'doing', 'pending'}:
-                task['status'] = 'todo'
-                task['started_at'] = None
-                task['submitted_at'] = None
-        provision = provision_by_id.get(task_id)
-        if provision and provision.get('script_id'):
-            task['script_id'] = provision['script_id']
-        merged_plan.append(task)
-    plan_tasks = _sync_plan_tasks_from_scripts(merged_plan, rows)
-    plan_payloads = [
-        _task_db_payload(task, by_id.get(str(task.get('id') or '').strip()))
-        for task in plan_tasks
+        next_task_ids.add(task['id'])
+    preserved_tasks = [
+        row for row in existing_tasks
+        if str(row.get('script_id') or '') not in {script['id'] for script in rows}
+        and str(row.get('id') or '') not in next_task_ids
     ]
-    sb.sync_content_tasks([*plan_payloads, *task_rows], SUPABASE_CONTENT_TASK_TABLE)
+    sb.sync_content_tasks([*preserved_tasks, *task_rows], SUPABASE_CONTENT_TASK_TABLE)
     sb.sync_content_script_blocks(block_rows, script_ids, SUPABASE_CONTENT_SCRIPT_BLOCK_TABLE)
-    if removed_script_ids:
-        sb.purge_content_script_blocks(removed_script_ids, SUPABASE_CONTENT_SCRIPT_BLOCK_TABLE)
-    _invalidate_workflow_read_cache()
-
-
-def _sync_legacy_content_scripts_table(rows: list[dict]) -> None:
-    existing = sb.list_content_scripts(SUPABASE_SCRIPT_TABLE)
-    existing_by_id = {str(row.get('id') or ''): row for row in existing}
-    now = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
-    staff = _current_staff()
-    db_rows = []
-    for row in rows:
-        current = existing_by_id.get(row['id']) or {}
-        db_rows.append({
-            'id': row['id'],
-            'title': row['title'],
-            'platform': row['platform'],
-            'status': row['status'],
-            'writer': row['writer'],
-            'script_date': row['date'],
-            'blocks': row['blocks'],
-            'created_by_staff_id': current.get('created_by_staff_id') or staff.get('id') or None,
-            'created_by_staff_name': current.get('created_by_staff_name') or staff.get('name') or staff.get('username') or None,
-            'created_at': current.get('created_at') or now,
-            'updated_at': now,
-        })
-    sb.sync_content_scripts(db_rows, SUPABASE_SCRIPT_TABLE)
 
 
 @app.route('/api/scripts', methods=['GET'])
 def scripts_get():
-    status_filter = str(request.args.get('status') or '').strip().lower()
-    lite = str(request.args.get('lite') or '').strip().lower() in {'1', 'true', 'yes'}
     if not USE_SUPABASE:
-        return jsonify({
-            'ok': False,
-            'error': 'Chưa bật Supabase cho thư viện kịch bản. Không dùng dữ liệu local/mock.',
-            'storage': 'disabled',
-        }), 503
+        rows = _clean_script_library(_load_scripts_local())
+        return jsonify({'ok': True, 'scripts': rows, 'storage': 'local'})
     try:
-        if lite:
-            tasks = _cached_workflow_tasks(lite=True)
-            rows = _apply_legacy_script_statuses(
-                _attach_plan_links_to_scripts(_scripts_lite_from_tasks(tasks), tasks),
-            )
-            rows = _filter_scripts_by_status(rows, status_filter)
-            return jsonify({'ok': True, 'scripts': rows, 'storage': 'supabase_workflow_lite'})
-        rows = _apply_legacy_script_statuses(_load_scripts_from_workflow_supabase())
+        rows = _load_scripts_from_workflow_supabase()
         if rows:
-            rows = _filter_scripts_by_status(rows, status_filter)
             return jsonify({'ok': True, 'scripts': rows, 'storage': 'supabase_workflow'})
-        workflow_tasks = sb.list_content_tasks(SUPABASE_CONTENT_TASK_TABLE)
-        if workflow_tasks:
-            return jsonify({'ok': True, 'scripts': [], 'storage': 'supabase_workflow'})
-        legacy_rows = _filter_scripts_by_status(
-            _clean_script_library(sb.list_content_scripts(SUPABASE_SCRIPT_TABLE)),
-            status_filter,
-        )
+        legacy_rows = _clean_script_library(sb.list_content_scripts(SUPABASE_SCRIPT_TABLE))
         warning = 'Đang đọc dữ liệu bảng content_scripts cũ. Bấm Lưu bài một lần để migrate sang content_tasks/content_script_blocks.'
         return jsonify({'ok': True, 'scripts': legacy_rows, 'storage': 'supabase_legacy', 'warning': warning if legacy_rows else ''})
     except Exception as e:
         message = str(e)
-        detail = _content_scripts_supabase_warning(e) if _content_scripts_should_fallback_local(e) else message
-        return jsonify({
-            'ok': False,
-            'error': f'Không tải được kịch bản từ Supabase: {detail}',
-            'storage': 'supabase_error',
-        }), 500
+        if _content_scripts_should_fallback_local(e):
+            rows = _clean_script_library(_load_scripts_local())
+            return jsonify({
+                'ok': True,
+                'scripts': rows,
+                'storage': 'local',
+                'warning': _content_scripts_supabase_warning(e),
+            })
+        return jsonify({'ok': False, 'error': f'Không tải được kịch bản từ Supabase: {message}'}), 500
 
 
 @app.route('/api/scripts', methods=['PUT'])
@@ -10769,33 +9191,16 @@ def scripts_save():
         return jsonify({'ok': False, 'error': 'Dữ liệu scripts không hợp lệ'}), 400
     rows = _clean_script_library(body.get('scripts'))
     if not USE_SUPABASE:
+        _save_scripts_local(rows)
         return jsonify({
-            'ok': False,
-            'error': 'Chưa bật Supabase cho thư viện kịch bản. Không lưu local/mock.',
-            'storage': 'disabled',
-        }), 503
+            'ok': True,
+            'scripts': rows,
+            'count': len(rows),
+            'storage': 'local',
+            'updated_at': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+        })
     try:
-        if body.get('full_documents') is not True:
-            existing_rows = _load_scripts_from_workflow_supabase()
-            incoming_by_id = {str(row.get('id') or ''): row for row in rows}
-            at_risk = [
-                row for row in existing_rows
-                if row.get('blocks')
-                and (
-                    str(row.get('id') or '') not in incoming_by_id
-                    or not incoming_by_id[str(row.get('id') or '')].get('blocks')
-                )
-            ]
-            if at_risk:
-                return jsonify({
-                    'ok': False,
-                    'error': 'Dữ liệu kịch bản chưa tải đầy đủ. Hãy tải lại trang trước khi lưu để tránh mất nội dung.',
-                }), 409
         _save_scripts_to_workflow_supabase(rows)
-        try:
-            _sync_legacy_content_scripts_table(rows)
-        except Exception:
-            pass
         return jsonify({
             'ok': True,
             'scripts': rows,
@@ -10837,12 +9242,17 @@ def scripts_save():
         })
     except Exception as e:
         message = str(e)
-        detail = _content_scripts_supabase_warning(e) if _content_scripts_should_fallback_local(e) else message
-        return jsonify({
-            'ok': False,
-            'error': f'Không lưu được kịch bản lên Supabase: {detail} | Workflow mới: {workflow_warning}',
-            'storage': 'supabase_error',
-        }), 500
+        if _content_scripts_should_fallback_local(e):
+            _save_scripts_local(rows)
+            return jsonify({
+                'ok': True,
+                'scripts': rows,
+                'count': len(rows),
+                'storage': 'local',
+                'warning': f'{_content_scripts_supabase_warning(e)} | Workflow mới: {workflow_warning}',
+                'updated_at': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+            })
+        return jsonify({'ok': False, 'error': f'Không lưu được kịch bản lên Supabase: {message}'}), 500
 
 
 def _load_tasks_local() -> list:
@@ -10853,85 +9263,18 @@ def _save_tasks_local(rows: list) -> None:
     _write_json(CONTENT_TASKS_FILE, rows)
 
 
-def _upsert_task_local(task: dict) -> dict:
-    task_id = str(task.get('id') or '').strip()
-    rows = _load_tasks_local()
-    next_rows = []
-    merged = None
-    for row in rows:
-        if str(row.get('id') or '').strip() == task_id:
-            merged = {**row, **task}
-            next_rows.append(merged)
-        else:
-            next_rows.append(row)
-    if merged is None:
-        merged = dict(task)
-        next_rows.append(merged)
-    _save_tasks_local(next_rows)
-    return merged
-
-
-def _get_content_task_by_id(task_id: str) -> tuple[dict | None, str]:
-    task_id = str(task_id or '').strip()
-    if not task_id:
-        return None, 'local'
-    if USE_SUPABASE:
-        try:
-            row = sb.get_content_task(task_id, SUPABASE_CONTENT_TASK_TABLE)
-            if row:
-                cleaned = _clean_content_tasks([row])
-                return (cleaned[0] if cleaned else None), 'supabase'
-        except Exception:
-            pass
-    for row in _load_tasks_local():
-        if str(row.get('id') or '').strip() == task_id:
-            return row, 'local'
-    return None, 'local'
-
-
-def _patch_content_task_notes(task_id: str, notes: list) -> tuple[dict | None, str, str]:
-    task_id = str(task_id or '').strip()
-    now = _workflow_now()
-    patch = {'notes': notes[-200:], 'updated_at': now}
-    if USE_SUPABASE:
-        try:
-            saved = sb.patch_content_task(task_id, patch, SUPABASE_CONTENT_TASK_TABLE)
-            if saved:
-                merged = _upsert_task_local(saved)
-                cleaned = _clean_content_tasks([merged])
-                _invalidate_workflow_read_cache()
-                return (cleaned[0] if cleaned else None), 'supabase', ''
-        except Exception as exc:
-            warning = _content_workflow_supabase_warning(exc)
-            existing, _ = _get_content_task_by_id(task_id)
-            if not existing:
-                return None, 'local', warning
-            merged = _upsert_task_local({**existing, **patch})
-            cleaned = _clean_content_tasks([merged])
-            return (cleaned[0] if cleaned else None), 'local', warning
-    existing, _ = _get_content_task_by_id(task_id)
-    if not existing:
-        return None, 'local', ''
-    merged = _upsert_task_local({**existing, **patch})
-    cleaned = _clean_content_tasks([merged])
-    return (cleaned[0] if cleaned else None), 'local', ''
-
-
-def _tasks_payload(rows: list[dict], storage: str, warning: str = '', *, lite: bool = False) -> dict:
-    public_rows = [
-        _public_content_task(row, lite=lite)
-        for row in _plan_board_tasks(rows)
-    ]
+def _tasks_payload(rows: list[dict], storage: str, warning: str = '') -> dict:
+    public_rows = [_public_content_task(row) for row in _clean_content_tasks(rows)]
     payload = {'ok': True, 'tasks': public_rows, 'storage': storage}
     if warning:
         payload['warning'] = warning
     return payload
 
 
-def _load_tasks_any(include_all: bool = False, *, lite: bool = False) -> tuple[list[dict], str, str]:
+def _load_tasks_any(include_all: bool = False) -> tuple[list[dict], str, str]:
     if USE_SUPABASE:
         try:
-            rows = _clean_content_tasks(_cached_workflow_tasks(lite=lite))
+            rows = _clean_content_tasks(sb.list_content_tasks(SUPABASE_CONTENT_TASK_TABLE))
             return (rows if include_all else _filter_content_tasks_for_current_staff(rows)), 'supabase', ''
         except Exception as exc:
             rows = _load_tasks_local()
@@ -10940,10 +9283,8 @@ def _load_tasks_any(include_all: bool = False, *, lite: bool = False) -> tuple[l
     return (rows if include_all else _filter_content_tasks_for_current_staff(rows)), 'local', ''
 
 
-def _save_tasks_any(rows: list[dict], *, provision_scripts: bool = True) -> tuple[list[dict], str, str]:
+def _save_tasks_any(rows: list[dict]) -> tuple[list[dict], str, str]:
     cleaned = _clean_content_tasks(rows)
-    if provision_scripts:
-        cleaned = _apply_script_provision_from_plan_tasks(cleaned)
     if USE_SUPABASE:
         try:
             current = sb.list_content_tasks(SUPABASE_CONTENT_TASK_TABLE)
@@ -10951,7 +9292,6 @@ def _save_tasks_any(rows: list[dict], *, provision_scripts: bool = True) -> tupl
             payloads = [_task_db_payload(row, by_id.get(str(row.get('id') or ''))) for row in cleaned]
             sb.sync_content_tasks(payloads, SUPABASE_CONTENT_TASK_TABLE)
             _save_tasks_local(cleaned)
-            _invalidate_workflow_read_cache()
             return cleaned, 'supabase', ''
         except Exception as exc:
             _save_tasks_local(cleaned)
@@ -10962,21 +9302,8 @@ def _save_tasks_any(rows: list[dict], *, provision_scripts: bool = True) -> tupl
 
 @app.route('/api/content-tasks', methods=['GET'])
 def content_tasks_get():
-    lite = str(request.args.get('lite') or '').strip().lower() in {'1', 'true', 'yes'}
-    rows, storage, warning = _load_tasks_any(include_all=_is_admin(), lite=lite)
-    return jsonify(_tasks_payload(rows, storage, warning, lite=lite))
-
-
-@app.route('/api/content-tasks/<task_id>', methods=['GET'])
-def content_tasks_get_one(task_id):
-    task_id = str(task_id or '').strip()
-    row, storage = _get_content_task_by_id(task_id)
-    if not row:
-        return jsonify({'ok': False, 'error': 'Không tìm thấy task'}), 404
-    visible = _filter_content_tasks_for_current_staff([row])
-    if not visible:
-        return jsonify({'ok': False, 'error': 'Không tìm thấy task'}), 404
-    return jsonify({'ok': True, 'task': _public_content_task(visible[0]), 'storage': storage})
+    rows, storage, warning = _load_tasks_any()
+    return jsonify(_tasks_payload(rows, storage, warning))
 
 
 @app.route('/api/content-tasks', methods=['POST'])
@@ -11016,13 +9343,9 @@ def content_tasks_sync():
     body = request.get_json(silent=True) or {}
     if not isinstance(body.get('tasks'), list):
         return jsonify({'ok': False, 'error': 'Dữ liệu tasks không hợp lệ'}), 400
-    incoming_clean = _clean_content_tasks(body.get('tasks') or [])
-    plan_incoming = _plan_visible_tasks(incoming_clean)
-    incoming = plan_incoming if plan_incoming else [row for row in incoming_clean if _is_workflow_script_task(row)]
+    incoming = _clean_content_tasks(body.get('tasks') or [])
     if _is_admin():
-        current_all, _, _ = _load_tasks_any(include_all=True)
-        internal_rows = [row for row in current_all if _is_workflow_script_task(row)]
-        rows_to_save = [*internal_rows, *incoming]
+        rows_to_save = incoming
     else:
         current_all, _, _ = _load_tasks_any(include_all=True)
         incoming_ids = {str(row.get('id') or '') for row in incoming}
@@ -11073,10 +9396,7 @@ def content_tasks_patch(task_id):
     updated['timeline'] = timeline[-100:]
     next_rows = [updated if str(row.get('id') or '') == task_id else row for row in rows]
     saved, storage, warning = _save_tasks_any(next_rows)
-    public_rows = [
-        _public_content_task(row)
-        for row in _plan_board_tasks(_filter_content_tasks_for_current_staff(saved))
-    ]
+    public_rows = [_public_content_task(row) for row in _filter_content_tasks_for_current_staff(saved)]
     payload = {'ok': True, 'task': next((row for row in public_rows if row.get('id') == task_id), _public_content_task(updated)), 'tasks': public_rows, 'storage': storage}
     if warning:
         payload['warning'] = warning
@@ -11089,25 +9409,28 @@ def content_tasks_add_note(task_id):
     text = str(body.get('text') or '').strip()
     if not text:
         return jsonify({'ok': False, 'error': 'Nhập ghi chú'}), 400
+    rows, _, _ = _load_tasks_any(include_all=True)
     task_id = str(task_id or '').strip()
-    existing, _ = _get_content_task_by_id(task_id)
-    if not existing:
-        return jsonify({'ok': False, 'error': 'Không tìm thấy task'}), 404
     staff = _current_staff()
-    notes = _safe_json_list(existing.get('notes'))
-    notes.append({
-        'id': uuid.uuid4().hex[:12],
-        'text': text[:3000],
-        'at': _workflow_now(),
-        'staff_id': staff.get('id') or '',
-        'staff_name': staff.get('name') or staff.get('username') or 'Nhân sự',
-    })
-    saved, storage, warning = _patch_content_task_notes(task_id, notes)
-    if not saved:
-        return jsonify({'ok': False, 'error': 'Không lưu được ghi chú'}), 500
-    payload = {'ok': True, 'task': _public_content_task(saved), 'storage': storage}
-    if warning:
-        payload['warning'] = warning
+    updated = None
+    for row in rows:
+        if str(row.get('id') or '') == task_id:
+            notes = _safe_json_list(row.get('notes'))
+            notes.append({
+                'id': uuid.uuid4().hex[:12],
+                'text': text[:3000],
+                'at': _workflow_now(),
+                'staff_id': staff.get('id') or '',
+                'staff_name': staff.get('name') or staff.get('username') or 'Nhân sự',
+            })
+            updated = {**row, 'notes': notes[-200:]}
+            break
+    if not updated:
+        return jsonify({'ok': False, 'error': 'Không tìm thấy task'}), 404
+    next_rows = [updated if str(row.get('id') or '') == task_id else row for row in rows]
+    saved, storage, warning = _save_tasks_any(next_rows)
+    payload = _tasks_payload(_filter_content_tasks_for_current_staff(saved), storage, warning)
+    payload['task'] = _public_content_task(updated)
     return jsonify(payload)
 
 
@@ -11150,12 +9473,9 @@ def content_studio_setup_save():
 @app.route('/api/content-techniques', methods=['GET'])
 def content_techniques_get():
     rows, storage, warning = _load_content_techniques()
-    payload = {'ok': True, 'techniques': rows, 'storage': storage, 'seeded': 'tự thêm' in str(warning or '').lower()}
+    payload = {'ok': True, 'techniques': rows, 'storage': storage}
     if warning:
-        if storage == 'local' and 'Supabase chưa đọc' in warning:
-            payload['warning'] = f'Đã dùng local, Supabase chưa đọc được: {warning}'
-        else:
-            payload['warning'] = warning
+        payload['warning'] = f'Đã dùng local, Supabase chưa đọc được: {warning}'
     return jsonify(payload)
 
 
@@ -11388,16 +9708,10 @@ def ai_models():
 @app.route('/api/ai/config', methods=['GET'])
 def ai_config_get():
     safe, storage, warning = _effective_ai_config()
-    runtime_classifier = _get_classifier()
     safe_keys = {}
-    for k in PROVIDERS:
-        v = _get_ai_key_from_config(k, safe)
+    for k, v in safe.get('keys', {}).items():
         safe_keys[k] = ('***' + v[-4:]) if v and len(v) > 4 else ('***' if v else '')
     safe.pop('keys', None)
-    if runtime_classifier.api_key and not safe_keys.get(str(safe.get('provider') or '')):
-        safe['provider'] = runtime_classifier.provider
-        safe['model'] = runtime_classifier.model
-        safe['using_server_key'] = True
     safe['keys_masked'] = safe_keys
     safe['storage'] = storage
     if warning:
@@ -11426,25 +9740,10 @@ def ai_config_save():
 
 @app.route('/api/ai/test', methods=['POST'])
 def ai_test():
-    body = request.get_json(silent=True) or {}
-    cfg, _, _ = _effective_ai_config()
-    provider = str(body.get('provider') or cfg.get('provider') or 'gemini').strip().lower()
-    if provider not in PROVIDERS:
-        provider = 'gemini'
-    default_model = PROVIDERS.get(provider, {}).get('default_model', DEFAULT_MODEL)
-    model = str(body.get('model') or cfg.get('model') or default_model).strip() or default_model
-    keys = dict(cfg.get('keys') or {})
-    test_key = str(body.get('key') or '').strip()
-    if test_key:
-        keys[provider] = test_key
-    api_key = _get_ai_key_from_config(provider, {**cfg, 'keys': keys})
-    classifier = AIClassifier(provider, model, api_key, cfg.get('categories', DEFAULT_CATEGORIES))
+    classifier = _get_classifier()
     if not classifier.api_key:
-        provider_label = PROVIDERS.get(provider, {}).get('name') or provider.upper()
-        return jsonify({'ok': False, 'error': f'Chưa nhập API key cho {provider_label}', 'provider': provider, 'model': model})
+        return jsonify({'ok': False, 'error': 'Chưa nhập API key'})
     result = classifier.test_connection()
-    result['provider'] = provider
-    result['model'] = model
     return jsonify(result)
 
 
@@ -11522,8 +9821,8 @@ def ai_leads_get():
             for item in items:
                 by_key[str(item.get('lead_key') or _lead_key(item))] = item
             merged[post_id] = list(by_key.values())
-        return jsonify(_filter_leads_for_current_staff(_public_leads_dict(merged)))
-    return jsonify(_filter_leads_for_current_staff(_public_leads_dict(_leads)))
+        return jsonify(_public_leads_dict(merged))
+    return jsonify(_public_leads_dict(_leads))
 
 
 @app.route('/api/ai/reply-suggestions', methods=['GET'])
@@ -11907,9 +10206,6 @@ def content_pipeline_post_create():
     hashtags = str(body.get('hashtags') or '').strip()
     scheduled_at = str(body.get('scheduled_at') or body.get('scheduledAt') or '').strip()
     targets = body.get('targets') or []
-    interval_minutes = _normalize_publish_interval_minutes(
-        body.get('publish_interval_minutes') or body.get('interval_minutes') or body.get('stagger_minutes')
-    )
     status = str(body.get('status') or ('scheduled' if scheduled_at else 'draft')).strip() or 'draft'
     if not title or not content:
         return jsonify({'ok': False, 'error': 'Nhập đủ tiêu đề và nội dung'}), 400
@@ -11933,9 +10229,6 @@ def content_pipeline_post_create():
         'status': status,
         'scheduled_at': scheduled_at,
         'scheduled_targets': targets if isinstance(targets, list) else [],
-        'scheduled_target_index': 0,
-        'publish_interval_minutes': interval_minutes,
-        'publish_results': [],
         'created_by_staff_id': staff.get('id', ''),
         'created_by_staff_name': staff.get('name', ''),
         'created_at': now,
@@ -11959,8 +10252,6 @@ def content_pipeline_post_update(post_id):
                 'status',
                 'scheduled_at',
                 'scheduled_targets',
-                'scheduled_target_index',
-                'publish_interval_minutes',
                 'publish_results',
                 'published_at',
                 'article_title',
@@ -12009,9 +10300,6 @@ def content_pipeline_post_schedule(post_id):
     body = request.get_json(silent=True) or {}
     scheduled_at = str(body.get('scheduled_at') or '').strip()
     targets = body.get('targets') or []
-    interval_minutes = _normalize_publish_interval_minutes(
-        body.get('publish_interval_minutes') or body.get('interval_minutes') or body.get('stagger_minutes')
-    )
     if not _parse_iso_datetime(scheduled_at):
         return jsonify({'ok': False, 'error': 'Thời gian lên lịch không hợp lệ'}), 400
     if not isinstance(targets, list) or not targets:
@@ -12021,9 +10309,6 @@ def content_pipeline_post_schedule(post_id):
             post['status'] = 'scheduled'
             post['scheduled_at'] = scheduled_at
             post['scheduled_targets'] = targets
-            post['scheduled_target_index'] = 0
-            post['publish_interval_minutes'] = interval_minutes
-            post['publish_results'] = []
             post['updated_at'] = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
             _save_content_pipeline()
             return jsonify({'ok': True, 'post': post})
@@ -12054,67 +10339,18 @@ def _run_due_scheduled_posts() -> dict:
                 continue
             targets = post.get('scheduled_targets') or []
             staff = _staff_for_scheduled_post(post)
-            interval_minutes = _normalize_publish_interval_minutes(post.get('publish_interval_minutes'))
-            try:
-                target_index = max(0, int(post.get('scheduled_target_index') or 0))
-            except (TypeError, ValueError):
-                target_index = 0
-            is_staggered = interval_minutes > 0 and isinstance(targets, list) and bool(targets)
-            if is_staggered and target_index >= len(targets):
-                successes = len([item for item in (post.get('publish_results') or []) if item.get('ok')])
-                failures = len(post.get('publish_results') or []) - successes
-                post['status'] = 'posted' if failures == 0 else ('failed' if successes == 0 else 'partial')
-                post['published_at'] = _utc_iso()
-                post['updated_at'] = post['published_at']
-                results.append({'id': post.get('id'), 'ok': failures == 0, 'completed_count': len(targets), 'target_count': len(targets)})
-                ran += 1
-                continue
-            due_targets = targets[target_index:target_index + 1] if is_staggered else targets
             if staff:
                 _runtime_staff_context.staff = staff
-                result = _publish_content_pipeline_post(post, due_targets if isinstance(due_targets, list) else [])
+                result = _publish_content_pipeline_post(post, targets if isinstance(targets, list) else [])
             else:
                 if hasattr(_runtime_staff_context, 'staff'):
                     delattr(_runtime_staff_context, 'staff')
                 result = {'ok': False, 'error': 'Không tìm thấy nhân sự/cookie đã tạo lịch', 'results': []}
-            result_rows = list(result.get('results') or [])
-            if is_staggered and not result_rows and due_targets:
-                target = due_targets[0]
-                result_rows = [{
-                    'ok': False,
-                    'type': target.get('type') or 'group',
-                    'id': target.get('id') or '',
-                    'name': target.get('name') or '',
-                    'error': result.get('error') or 'Không đăng được bài',
-                }]
-            previous_results = list(post.get('publish_results') or []) if is_staggered else []
-            post['publish_results'] = previous_results + result_rows
-            now_iso = _utc_iso()
-            post['updated_at'] = now_iso
-            if is_staggered:
-                next_index = target_index + 1
-                post['scheduled_target_index'] = next_index
-                if next_index < len(targets):
-                    next_at = datetime.now(timezone.utc) + timedelta(minutes=interval_minutes)
-                    post['scheduled_at'] = _utc_iso(next_at)
-                    post['status'] = 'scheduled'
-                else:
-                    successes = len([item for item in post['publish_results'] if item.get('ok')])
-                    failures = len(post['publish_results']) - successes
-                    post['published_at'] = now_iso
-                    post['status'] = 'posted' if failures == 0 else ('failed' if successes == 0 else 'partial')
-                results.append({
-                    'id': post.get('id'),
-                    **result,
-                    'queued': next_index < len(targets),
-                    'completed_count': next_index,
-                    'target_count': len(targets),
-                    'next_scheduled_at': post.get('scheduled_at') if next_index < len(targets) else '',
-                })
-            else:
-                post['published_at'] = now_iso
-                post['status'] = 'posted' if result.get('ok') else 'failed'
-                results.append({'id': post.get('id'), **result})
+            post['publish_results'] = result.get('results') or []
+            post['published_at'] = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
+            post['status'] = 'posted' if result.get('ok') else 'failed'
+            post['updated_at'] = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
+            results.append({'id': post.get('id'), **result})
             ran += 1
         if ran:
             _save_content_pipeline()
@@ -12179,6 +10415,5 @@ if SCHEDULED_POST_WORKER_INTERVAL_SECONDS > 0:
 
 if __name__ == '__main__':
     print(f'[server] supabase={"on" if USE_SUPABASE else "off"} | staff cookie optional | http://localhost:{PORT}')
-    from waitress import serve
-    serve(app, host='0.0.0.0', port=PORT, threads=8, channel_timeout=180)
+    app.run(debug=False, host='0.0.0.0', port=PORT, threaded=True)
 

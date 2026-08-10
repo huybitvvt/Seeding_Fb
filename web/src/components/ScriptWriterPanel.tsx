@@ -1,8 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
-import { useRouter } from 'next/navigation';
-import { APP_BRAND } from '@/lib/app-brand';
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import {
   AlignCenter,
   AlignJustify,
@@ -11,12 +9,12 @@ import {
   AtSign,
   Bot,
   Bold,
-  CalendarDays,
   Check,
   ChevronDown,
   ChevronUp,
   Clipboard,
   Copy,
+  Database,
   FileDown,
   GripVertical,
   Image as ImageIcon,
@@ -35,11 +33,8 @@ import {
   Wand2,
   X,
 } from 'lucide-react';
-import { AI_TIMEOUT_MS, api, getApiBase } from '@/lib/api';
-import { viewToPath } from '@/lib/app-routes';
+import { AI_TIMEOUT_MS, api } from '@/lib/api';
 import { BusinessProfilePanel } from '@/components/BusinessProfilePanel';
-import { SettingsFormModal } from '@/components/SettingsFormModal';
-import { SettingsSectionCard } from '@/components/SettingsSectionCard';
 import './script-writer-panel.css';
 import './script-writer-panel-v3.css';
 
@@ -62,8 +57,6 @@ type ScriptDocument = {
   writer: string;
   date: string;
   blocks: ScriptBlock[];
-  plan_task_id?: string;
-  plan_task_title?: string;
 };
 
 type SectionKey = 'opening' | 'body' | 'ending';
@@ -241,6 +234,35 @@ function fallbackModels(provider: string) {
   return MODEL_FALLBACKS[provider] || MODEL_FALLBACKS.gemini;
 }
 
+const INITIAL_SCRIPTS: ScriptDocument[] = [
+  {
+    id: 'script-truss-rod',
+    title: 'Hướng dẫn điều chỉnh ty đàn',
+    platform: 'TikTok',
+    status: 'approved',
+    writer: 'An',
+    date: '01/06/2026',
+    blocks: [
+      { id: 'b1', type: 'hook', text: 'Bạn đang bị rè dây, tiếng đàn không chuẩn? Đây là cách xử lý!' },
+      { id: 'b2', type: 'scene', text: '[Cảnh: Cận đàn guitar, tay điều chỉnh ốc ty]' },
+      { id: 'b3', type: 'body', text: 'Ty đàn (truss rod) là thanh kim loại bên trong cần đàn giúp điều chỉnh độ cong. Khi thời tiết thay đổi, ty có thể bị lệch.' },
+      { id: 'b4', type: 'cta', text: 'Like và follow Guitar Sài Thành để nhận thêm mẹo chăm sóc đàn mỗi ngày! 🎸' },
+    ],
+  },
+  {
+    id: 'script-acoustic-review',
+    title: 'Review đàn acoustic 3 triệu',
+    platform: 'YouTube',
+    status: 'pending',
+    writer: 'Bình',
+    date: '02/06/2026',
+    blocks: [
+      { id: 'b5', type: 'hook', text: '3 triệu mua được đàn acoustic ngon? Mình sẽ review thật 100%!' },
+      { id: 'b6', type: 'body', text: 'Hôm nay mình review 3 cây đàn acoustic tầm giá 3 triệu đồng...' },
+    ],
+  },
+];
+
 function newId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -401,7 +423,7 @@ type ScriptFacebookPreviewProps = {
 };
 
 function ScriptFacebookPreview({ script, postHtml, hasContent, mediaUrls = [] }: ScriptFacebookPreviewProps) {
-  const pageName = script.writer?.trim() || APP_BRAND.name;
+  const pageName = script.writer?.trim() || 'Seeding Fsolution';
   const avatar = pageName.slice(0, 1).toUpperCase();
 
   return (
@@ -453,16 +475,12 @@ type ScriptBlockEditorProps = {
   block: ScriptBlock;
   placeholder: string;
   onChange: (patch: Partial<ScriptBlock>) => void;
-  onBlurSave?: () => void;
   minimal?: boolean;
-  compactChrome?: ReactNode;
-  compactTrailing?: ReactNode;
 };
 
-function ScriptBlockEditor({ block, placeholder, onChange, onBlurSave, minimal = false, compactChrome, compactTrailing }: ScriptBlockEditorProps) {
+function ScriptBlockEditor({ block, placeholder, onChange, minimal = false }: ScriptBlockEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const mountedBlockId = useRef('');
-  const [fontSize, setFontSize] = useState(13);
 
   useEffect(() => {
     const node = editorRef.current;
@@ -495,62 +513,6 @@ function ScriptBlockEditor({ block, placeholder, onChange, onBlurSave, minimal =
   function handleFormatMouseDown(event: MouseEvent, command: string, value?: string) {
     event.preventDefault();
     runCommand(command, value);
-  }
-
-  function selectedRangeInEditor(node: HTMLDivElement) {
-    const selection = window.getSelection();
-    if (!selection?.rangeCount) return null;
-    const range = selection.getRangeAt(0);
-    return node.contains(range.commonAncestorContainer) ? range : null;
-  }
-
-  function updateFontSizeFromSelection() {
-    const node = editorRef.current;
-    const range = node ? selectedRangeInEditor(node) : null;
-    if (!node || !range) return;
-    const target = range.startContainer.nodeType === Node.TEXT_NODE
-      ? range.startContainer.parentElement
-      : range.startContainer as HTMLElement;
-    if (!target || !node.contains(target)) return;
-    const current = Math.round(Number.parseFloat(window.getComputedStyle(target).fontSize));
-    if (Number.isFinite(current)) setFontSize(Math.min(72, Math.max(8, current)));
-  }
-
-  function applyFontSize(nextValue: number) {
-    const node = editorRef.current;
-    if (!node) return;
-    const next = Math.min(72, Math.max(8, Math.round(nextValue)));
-    const selection = window.getSelection();
-    let range = selectedRangeInEditor(node);
-    if (!range || range.collapsed) {
-      range = document.createRange();
-      range.selectNodeContents(node);
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-    }
-    node.focus();
-    try {
-      document.execCommand('styleWithCSS', false, 'false');
-    } catch {
-      /* trình duyệt cũ */
-    }
-    document.execCommand('fontSize', false, '7');
-    node.querySelectorAll('font[size="7"]').forEach((font) => {
-      font.removeAttribute('size');
-      (font as HTMLElement).style.fontSize = `${next}px`;
-    });
-    try {
-      document.execCommand('styleWithCSS', false, 'true');
-    } catch {
-      /* trình duyệt cũ */
-    }
-    setFontSize(next);
-    syncEditor();
-  }
-
-  function handleFontSizeMouseDown(event: MouseEvent, direction: -1 | 1) {
-    event.preventDefault();
-    applyFontSize(fontSize + direction);
   }
 
   function setAlign(align: BlockAlign) {
@@ -595,87 +557,53 @@ function ScriptBlockEditor({ block, placeholder, onChange, onBlurSave, minimal =
     );
   }
 
-  const formatToolbar = !minimal ? (
-    <div className="script-block-toolbar" role="toolbar" aria-label="Định dạng văn bản">
-      <button type="button" title="In đậm" onMouseDown={(event) => handleFormatMouseDown(event, 'bold')}>
-        <Bold />
-      </button>
-      <button type="button" title="In nghiêng" onMouseDown={(event) => handleFormatMouseDown(event, 'italic')}>
-        <Italic />
-      </button>
-      <button type="button" title="Gạch chân" onMouseDown={(event) => handleFormatMouseDown(event, 'underline')}>
-        <Underline />
-      </button>
-      <div className="script-font-size-control" aria-label="Cỡ chữ theo pixel">
-        <button type="button" title="Giảm cỡ chữ" disabled={fontSize <= 8} onMouseDown={(event) => handleFontSizeMouseDown(event, -1)}>
-          −
-        </button>
-        <span title={`Cỡ chữ ${fontSize}px`}>{fontSize}</span>
-        <button type="button" title="Tăng cỡ chữ" disabled={fontSize >= 72} onMouseDown={(event) => handleFontSizeMouseDown(event, 1)}>
-          +
-        </button>
-      </div>
-      <span className="script-block-toolbar-divider" aria-hidden="true" />
-      <button type="button" className={block.align === 'left' || !block.align ? 'active' : ''} title="Căn trái" onMouseDown={(event) => handleAlignMouseDown(event, 'left')}>
-        <AlignLeft />
-      </button>
-      <button type="button" className={block.align === 'center' ? 'active' : ''} title="Căn giữa" onMouseDown={(event) => handleAlignMouseDown(event, 'center')}>
-        <AlignCenter />
-      </button>
-      <button type="button" className={block.align === 'right' ? 'active' : ''} title="Căn phải" onMouseDown={(event) => handleAlignMouseDown(event, 'right')}>
-        <AlignRight />
-      </button>
-      <button type="button" className={block.align === 'justify' ? 'active' : ''} title="Căn đều" onMouseDown={(event) => handleAlignMouseDown(event, 'justify')}>
-        <AlignJustify />
-      </button>
-    </div>
-  ) : null;
-
-  const richEditor = (
-    <div
-      ref={editorRef}
-      className="script-rich-editor"
-      contentEditable
-      suppressContentEditableWarning
-      role="textbox"
-      aria-multiline="true"
-      data-placeholder={placeholder}
-      style={{ textAlign: block.align || 'left' }}
-      onInput={syncEditor}
-      onMouseUp={updateFontSizeFromSelection}
-      onKeyUp={updateFontSizeFromSelection}
-      onBlur={() => {
-        syncEditor();
-        onBlurSave?.();
-      }}
-    />
-  );
-
-  if (compactChrome) {
-    return (
-      <div className="script-block-editor script-block-editor-compact">
-        <div className="script-block-chrome-row">
-          {compactChrome}
-          {formatToolbar}
-          {compactTrailing}
-        </div>
-        {richEditor}
-      </div>
-    );
-  }
-
   return (
     <div className={`script-block-editor${minimal ? ' minimal' : ''}`}>
-      {formatToolbar}
-      {richEditor}
+      {!minimal ? (
+        <div className="script-block-toolbar" role="toolbar" aria-label="Định dạng văn bản">
+          <button type="button" title="In đậm" onMouseDown={(event) => handleFormatMouseDown(event, 'bold')}>
+            <Bold />
+          </button>
+          <button type="button" title="In nghiêng" onMouseDown={(event) => handleFormatMouseDown(event, 'italic')}>
+            <Italic />
+          </button>
+          <button type="button" title="Gạch chân" onMouseDown={(event) => handleFormatMouseDown(event, 'underline')}>
+            <Underline />
+          </button>
+          <span className="script-block-toolbar-divider" aria-hidden="true" />
+          <button type="button" className={block.align === 'left' || !block.align ? 'active' : ''} title="Căn trái" onMouseDown={(event) => handleAlignMouseDown(event, 'left')}>
+            <AlignLeft />
+          </button>
+          <button type="button" className={block.align === 'center' ? 'active' : ''} title="Căn giữa" onMouseDown={(event) => handleAlignMouseDown(event, 'center')}>
+            <AlignCenter />
+          </button>
+          <button type="button" className={block.align === 'right' ? 'active' : ''} title="Căn phải" onMouseDown={(event) => handleAlignMouseDown(event, 'right')}>
+            <AlignRight />
+          </button>
+          <button type="button" className={block.align === 'justify' ? 'active' : ''} title="Căn đều" onMouseDown={(event) => handleAlignMouseDown(event, 'justify')}>
+            <AlignJustify />
+          </button>
+        </div>
+      ) : null}
+      <div
+        ref={editorRef}
+        className="script-rich-editor"
+        contentEditable
+        suppressContentEditableWarning
+        role="textbox"
+        aria-multiline="true"
+        data-placeholder={placeholder}
+        style={{ textAlign: block.align || 'left' }}
+        onInput={syncEditor}
+        onBlur={syncEditor}
+      />
     </div>
   );
 }
 
 export function ScriptWriterPanel() {
-  const router = useRouter();
-  const [scripts, setScripts] = useState<ScriptDocument[]>([]);
-  const [selectedId, setSelectedId] = useState('');
+  const [scripts, setScripts] = useState<ScriptDocument[]>(INITIAL_SCRIPTS);
+  const [selectedId, setSelectedId] = useState(INITIAL_SCRIPTS[0].id);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<ScriptStatus | ''>('');
   const [showCreate, setShowCreate] = useState(false);
@@ -687,7 +615,6 @@ export function ScriptWriterPanel() {
   const [newWriter, setNewWriter] = useState('An');
   const [notice, setNotice] = useState('');
   const [loaded, setLoaded] = useState(false);
-  const [detailsLoaded, setDetailsLoaded] = useState(false);
   const [syncStatus, setSyncStatus] = useState('Đang tải từ Supabase...');
   const [syncError, setSyncError] = useState('');
   const [syncWarning, setSyncWarning] = useState('');
@@ -720,162 +647,49 @@ export function ScriptWriterPanel() {
   const [studioSetup, setStudioSetup] = useState<ContentStudioSetup>(defaultContentStudioSetup);
   const [setupStatus, setSetupStatus] = useState('');
   const [setupBusy, setSetupBusy] = useState(false);
-  const [settingsModal, setSettingsModal] = useState<'prompt' | 'ai' | 'techniques' | null>(null);
   const [imageBusy, setImageBusy] = useState(false);
   const [publishTargetType, setPublishTargetType] = useState<'group' | 'page'>('group');
   const [publishTargetId, setPublishTargetId] = useState('');
   const [publishBusy, setPublishBusy] = useState(false);
-  const userEditedRef = useRef(false);
-  const skipNextAutosaveRef = useRef(false);
-  const manualSaveRef = useRef(false);
-  const scriptsRef = useRef(scripts);
-  const saveTimerRef = useRef<number | null>(null);
-  const dirtyRef = useRef(false);
-  const loadSeqRef = useRef(0);
-  scriptsRef.current = scripts;
-
-  function flushSaveKeepalive(rows: ScriptDocument[]) {
-    if (typeof window === 'undefined' || !rows.length) return;
-    const url = `${getApiBase()}/api/scripts`;
-    void fetch(url, {
-      method: 'PUT',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scripts: rows, full_documents: true }),
-      keepalive: true,
-    });
-  }
-
-  function flushActiveEditor() {
-    if (typeof document === 'undefined') return;
-    const active = document.activeElement;
-    if (active instanceof HTMLElement) active.blur();
-  }
-
-  function queueSave(showNotice = false, immediate = false) {
-    if (!loaded) return;
-    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
-    dirtyRef.current = true;
-    const run = () => {
-      dirtyRef.current = false;
-      void saveScripts(scriptsRef.current, showNotice);
-    };
-    const delay = immediate ? 80 : 500;
-    saveTimerRef.current = window.setTimeout(run, delay);
-  }
-
-  function saveNow(showNotice = true) {
-    if (!loaded) return;
-    if (saveTimerRef.current) {
-      window.clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
-    manualSaveRef.current = true;
-    flushActiveEditor();
-    dirtyRef.current = false;
-    window.setTimeout(() => {
-      void saveScripts(scriptsRef.current, showNotice).finally(() => {
-        manualSaveRef.current = false;
-      });
-    }, 50);
-  }
 
   useEffect(() => {
-    const seq = ++loadSeqRef.current;
-    const isStale = () => seq !== loadSeqRef.current;
-
-    function scriptIdFromUrl() {
-      return typeof window !== 'undefined'
-        ? new URLSearchParams(window.location.search).get('script')?.trim() || ''
-        : '';
-    }
-
-    function scriptHasLocalBlocks(script: ScriptDocument) {
-      return script.blocks.some((block) => htmlToPlain(block.text).trim());
-    }
-
-    function mergeScriptRowsFromServer(current: ScriptDocument[], incoming: ScriptDocument[]) {
-      const byId = new Map(incoming.map((row) => [row.id, row]));
-      return current.map((script) => {
-        const remote = byId.get(script.id);
-        if (!remote) return script;
-        if (scriptHasLocalBlocks(script)) return script;
-        return {
-          ...script,
-          ...remote,
-          blocks: remote.blocks?.length ? remote.blocks : script.blocks,
-        };
-      });
-    }
-
-    function applyScriptRows(rows: ScriptDocument[], payload: { warning?: string; storage?: string; scripts?: unknown[] }) {
-      if (userEditedRef.current) return;
-      const preferred = rows.find((script) => script.id === scriptIdFromUrl());
-      skipNextAutosaveRef.current = true;
-      setScripts(rows);
-      setSelectedId((current) => (rows.some((script) => script.id === current) ? current : preferred?.id || rows[0]?.id || ''));
-      setSyncWarning(typeof payload.warning === 'string' ? payload.warning : '');
-      if (payload.storage === 'local') {
-        setSyncStatus(
-          payload.warning
-            ? 'Đang chờ Supabase API cập nhật cache…'
-            : rows.length
-              ? `Đã lưu tạm trên máy chủ · ${rows.length} kịch bản`
-              : 'Chưa có kịch bản — bấm + để tạo mới',
-        );
-      } else {
-        setSyncStatus(rows.length ? `Đã tải ${rows.length} kịch bản từ Supabase` : 'Chưa có kịch bản — bấm + để tạo mới');
-      }
-    }
-
+    let cancelled = false;
     async function loadScripts() {
       setSyncStatus('Đang tải từ Supabase...');
       setSyncError('');
       setSyncWarning('');
       try {
-        const liteResponse = await api('/api/scripts?lite=1', { timeoutMs: 30000 });
-        const litePayload = await liteResponse.json().catch(() => ({}));
-        if (isStale()) return;
-        if (!liteResponse.ok || !litePayload.ok) {
-          throw new Error(litePayload.error || 'Không tải được thư viện kịch bản');
-        }
-        const liteRows = Array.isArray(litePayload.scripts) ? litePayload.scripts as ScriptDocument[] : [];
-        applyScriptRows(liteRows, litePayload);
-        if (!isStale()) {
-          setLoaded(true);
-          setDetailsLoaded(true);
-        }
-
-        if (!liteRows.length) {
-          return;
-        }
-
-        setSyncStatus('Đang tải nội dung chi tiết...');
-        const response = await api('/api/scripts', { timeoutMs: 60000 });
-        const payload = await response.json().catch(() => ({}));
-        if (isStale()) return;
-        if (!response.ok || !payload.ok) throw new Error(payload.error || 'Không tải được nội dung kịch bản');
-        const rows = Array.isArray(payload.scripts) ? payload.scripts as ScriptDocument[] : [];
-        if (userEditedRef.current) {
-          skipNextAutosaveRef.current = true;
-          setScripts((current) => mergeScriptRowsFromServer(current, rows));
-          setSyncStatus(`Đã tải ${rows.length} kịch bản từ Supabase`);
+        const response = await api('/api/scripts', { timeoutMs: 30000 });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) throw new Error(payload.error || 'Không tải được thư viện kịch bản');
+        if (cancelled) return;
+        const rows = Array.isArray(payload.scripts) && payload.scripts.length
+          ? payload.scripts as ScriptDocument[]
+          : INITIAL_SCRIPTS;
+        setScripts(rows);
+        setSelectedId(rows[0]?.id || '');
+        setSyncWarning(typeof payload.warning === 'string' ? payload.warning : '');
+        if (payload.storage === 'local') {
+          setSyncStatus(
+            payload.warning
+              ? 'Đang chờ Supabase API cập nhật cache…'
+              : payload.scripts?.length
+                ? 'Đã lưu tạm trên máy chủ'
+                : 'Chưa có Supabase — dùng dữ liệu mẫu',
+          );
         } else {
-          applyScriptRows(rows, payload);
+          setSyncStatus(payload.scripts?.length ? 'Đã tải từ Supabase' : 'Đang tạo dữ liệu mẫu trên Supabase...');
         }
       } catch (error) {
-        if (isStale()) return;
+        if (cancelled) return;
         setSyncError(error instanceof Error ? error.message : 'Không kết nối được Supabase');
         setSyncStatus('Chưa đồng bộ Supabase');
       } finally {
-        if (!isStale()) {
-          setLoaded(true);
-          setDetailsLoaded(true);
-        }
+        if (!cancelled) setLoaded(true);
       }
     }
     void loadScripts();
-    return () => { loadSeqRef.current += 1; };
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -888,43 +702,31 @@ export function ScriptWriterPanel() {
   }, [loaded, scripts]);
 
   useEffect(() => {
-    if (!loaded) return;
+    void loadTechniques();
+    // loadTechniques is stable enough for this mount-only fetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    void loadAiConfig();
+    // loadAiConfig is a mount-only bootstrap for the content AI panel.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    void loadStudioSetup();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!loaded || syncError) return;
     const timer = window.setTimeout(() => {
-      void loadTechniques();
-      void loadAiConfig();
-      void loadStudioSetup();
-    }, 0);
+      void saveScripts(scripts, false);
+    }, 900);
     return () => window.clearTimeout(timer);
-    // Defer AI settings bootstrap until scripts are on screen.
+    // saveScripts is intentionally driven by the latest scripts snapshot.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded]);
-
-  useEffect(() => {
-    if (!loaded || !detailsLoaded) return;
-    if (skipNextAutosaveRef.current) {
-      skipNextAutosaveRef.current = false;
-      return;
-    }
-    queueSave(false, false);
-    return () => {
-      if (manualSaveRef.current) return;
-      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
-    };
-    // queueSave is intentionally driven by the latest scripts snapshot.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, detailsLoaded, scripts]);
-
-  useEffect(() => {
-    if (!loaded) return;
-    const onPageHide = () => {
-      if (dirtyRef.current) flushSaveKeepalive(scriptsRef.current);
-    };
-    window.addEventListener('pagehide', onPageHide);
-    return () => {
-      window.removeEventListener('pagehide', onPageHide);
-      if (dirtyRef.current) flushSaveKeepalive(scriptsRef.current);
-    };
-  }, [loaded]);
+  }, [loaded, scripts]);
 
   useEffect(() => {
     if (!notice) return;
@@ -932,7 +734,7 @@ export function ScriptWriterPanel() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
-  const selected = loaded ? scripts.find((script) => script.id === selectedId) || null : null;
+  const selected = scripts.find((script) => script.id === selectedId) || null;
   const facebookPost = useMemo(() => (selected ? buildFacebookPost(selected) : null), [selected]);
   const visibleScripts = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase('vi');
@@ -968,7 +770,7 @@ export function ScriptWriterPanel() {
       const response = await api('/api/scripts', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scripts: rows, full_documents: true }),
+        body: JSON.stringify({ scripts: rows }),
         timeoutMs: 30000,
       });
       const payload = await response.json();
@@ -979,11 +781,9 @@ export function ScriptWriterPanel() {
         setSyncStatus(payload.warning ? `Đã lưu tạm · chờ Supabase API · ${savedAt}` : `Đã lưu tạm trên máy chủ · ${savedAt}`);
         if (showNotice) setNotice(payload.warning ? 'Đã lưu tạm. Supabase API chưa nhận bảng — xem hướng dẫn vàng phía trên.' : 'Đã lưu tạm trên máy chủ.');
       } else {
-        setSyncStatus(`Đã lưu Supabase · ${rows.length} kịch bản · ${savedAt}`);
-        if (showNotice) setNotice(`Đã lưu ${rows.length} kịch bản lên Supabase.`);
+        setSyncStatus(`Đã lưu Supabase · ${savedAt}`);
+        if (showNotice) setNotice('Đã lưu kịch bản lên Supabase.');
       }
-      dirtyRef.current = false;
-      userEditedRef.current = false;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Không kết nối được Supabase';
       setSyncError(message);
@@ -999,10 +799,7 @@ export function ScriptWriterPanel() {
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload.ok) throw new Error(payload.error || 'Không tải được kỹ thuật content');
       setTechniques(Array.isArray(payload.techniques) ? payload.techniques : []);
-      setTechniqueStatus(
-        payload.warning
-        || (payload.seeded ? 'Đã tự thêm kỹ thuật marketing mặc định cho khách.' : ''),
-      );
+      setTechniqueStatus(payload.warning || '');
     } catch (error) {
       setTechniqueStatus(error instanceof Error ? error.message : 'Không tải được kỹ thuật content');
     }
@@ -1076,20 +873,9 @@ export function ScriptWriterPanel() {
     setAiConfigBusy(true);
     setAiConfigStatus('Đang test AI...');
     try {
-      const body: Record<string, string> = {
-        provider: aiProvider,
-        model: aiModel || DEFAULT_MODELS[aiProvider] || DEFAULT_MODELS.gemini,
-      };
-      if (aiKeyInput.trim()) body.key = aiKeyInput.trim();
-      const response = await api('/api/ai/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        timeoutMs: 45000,
-      });
+      const response = await api('/api/ai/test', { method: 'POST', timeoutMs: 45000 });
       const payload = await response.json().catch(() => ({}));
-      const providerLabel = payload.provider === 'openai' ? 'OpenAI/ChatGPT' : payload.provider === 'groq' ? 'Groq' : 'Gemini';
-      setAiConfigStatus(payload.ok ? `Kết nối ${providerLabel} OK (${payload.model || body.model}).` : (payload.error || 'AI chưa kết nối được.'));
+      setAiConfigStatus(payload.ok ? 'Kết nối AI OK.' : (payload.error || 'AI chưa kết nối được.'));
     } catch {
       setAiConfigStatus('Không gọi được backend để test AI.');
     } finally {
@@ -1099,7 +885,6 @@ export function ScriptWriterPanel() {
 
   async function saveCurrentWithStatus(status: ScriptStatus, message: string) {
     if (!selected) return;
-    flushActiveEditor();
     const nextRows = scripts.map((script) => (script.id === selected.id ? { ...script, status } : script));
     setScripts(nextRows);
     await saveScripts(nextRows, false);
@@ -1222,8 +1007,6 @@ export function ScriptWriterPanel() {
   }
 
   function updateSelected(updater: (script: ScriptDocument) => ScriptDocument) {
-    if (!loaded) return;
-    userEditedRef.current = true;
     setScripts((rows) => rows.map((script) => (script.id === selectedId ? updater(script) : script)));
   }
 
@@ -1232,28 +1015,16 @@ export function ScriptWriterPanel() {
     setNotice('Đang sửa kịch bản.');
   }
 
-  function openPlanForScript(scriptId: string, options?: { edit?: boolean }) {
-    const script = scripts.find((item) => item.id === scriptId);
-    if (!script) return;
-    const taskId = script.plan_task_id?.trim() || `task-${script.id}`;
-    const query = new URLSearchParams({ task: taskId });
-    if (options?.edit) query.set('edit', '1');
-    router.push(`${viewToPath('plan')}?${query.toString()}`);
-  }
-
   function deleteScript(scriptId: string) {
     const script = scripts.find((item) => item.id === scriptId);
     if (!script) return;
     if (!window.confirm(`Xóa kịch bản "${script.title}"?`)) return;
-    userEditedRef.current = true;
     const next = scripts.filter((item) => item.id !== scriptId);
     setScripts(next);
     if (selectedId === scriptId) {
       setSelectedId(next[0]?.id || '');
     }
-    setNotice('Đã xóa kịch bản — đang lưu Supabase...');
-    skipNextAutosaveRef.current = true;
-    void saveScripts(next, true);
+    setNotice('Đã xóa kịch bản.');
   }
 
   function createScript() {
@@ -1271,18 +1042,11 @@ export function ScriptWriterPanel() {
       date: new Date().toLocaleDateString('vi-VN'),
       blocks: [{ id: newId('block'), type: 'hook', text: '' }],
     };
-    userEditedRef.current = true;
-    const nextScripts = [script, ...scripts];
-    setScripts(nextScripts);
+    setScripts((rows) => [script, ...rows]);
     setSelectedId(script.id);
     setNewTitle('');
     setShowCreate(false);
-    setNotice('Đã tạo kịch bản mới — đang lưu Supabase...');
-    void saveScripts(nextScripts, true);
-  }
-
-  function handleEditorBlurSave() {
-    queueSave(false, true);
+    setNotice('Đã tạo kịch bản mới.');
   }
 
   function addBlock(type: BlockType = 'text', afterIndex?: number, text = '') {
@@ -1360,9 +1124,9 @@ export function ScriptWriterPanel() {
     const post = facebookPost || buildFacebookPost(selected);
     const printedAt = new Date().toLocaleDateString('vi-VN');
     const bodyHtml = post.html || '<p style="color:#9CA3AF">Kịch bản chưa có nội dung.</p>';
-    return `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><title>${escapeHtml(selected.title)}</title><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap"><style>
+    return `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><title>${escapeHtml(selected.title)}</title><style>
       @page { margin: 18mm; }
-      body { font-family: Roboto, Arial, sans-serif; max-width: 680px; margin: 36px auto; color: #1E1B4B; padding: 0 18px; }
+      body { font-family: "Segoe UI", Arial, sans-serif; max-width: 680px; margin: 36px auto; color: #1E1B4B; padding: 0 18px; }
       .head { border-bottom: 3px solid #1877F2; padding-bottom: 12px; margin-bottom: 22px; }
       .brand { font-size: 9px; color: #9CA3AF; margin-bottom: 3px; }
       h1 { font-size: 20px; font-weight: 800; margin: 0 0 4px; }
@@ -1374,7 +1138,7 @@ export function ScriptWriterPanel() {
       .foot { margin-top: 36px; border-top: 1px solid #eee; padding-top: 9px; font-size: 9px; color: #ccc; text-align: center; }
     </style></head><body>
       <div class="head">
-        <div class="brand">${APP_BRAND.name} · Bài đăng Facebook</div>
+        <div class="brand">Seeding Fsolution · Bài đăng Facebook</div>
         <h1>${escapeHtml(selected.title)}</h1>
         <div class="meta">${escapeHtml(selected.writer)} · ${escapeHtml(selected.platform)} · ${escapeHtml(selected.date)}</div>
       </div>
@@ -1545,15 +1309,15 @@ export function ScriptWriterPanel() {
   function addAiTemplate(type: 'hook' | 'intro' | 'full' | 'cta') {
     if (!selected) return;
     const topic = selected.title || 'nội dung này';
-    const prompts: Record<typeof type, string> = {
-      hook: `Viết 1 hook ngắn (tối đa 2 câu) cho chủ đề "${topic}".`,
-      intro: `Viết đoạn mở đầu ngắn cho chủ đề "${topic}".`,
-      full: `Viết khung nội dung HOOK / BODY / CTA cho chủ đề "${topic}".`,
-      cta: `Viết 1 CTA ngắn cho chủ đề "${topic}".`,
+    const templates = {
+      hook: `Bạn có chắc mình đã hiểu đúng về ${topic.toLocaleLowerCase('vi')}? 30 giây tới sẽ giúp bạn tránh lỗi phổ biến nhất.`,
+      intro: `Trong video này, mình sẽ chia sẻ ngắn gọn và thực tế về ${topic.toLocaleLowerCase('vi')}, kèm ví dụ để bạn có thể áp dụng ngay.`,
+      full: `Bắt đầu bằng vấn đề khách hàng thường gặp.\n\nGiải thích nguyên nhân bằng ngôn ngữ đơn giản.\n\nĐưa ra 3 bước xử lý cụ thể và minh họa trực quan.`,
+      cta: 'Theo dõi Seeding Fsolution để nhận thêm kịch bản và mẹo triển khai nội dung hiệu quả mỗi ngày.',
     };
-    const section: SectionKey = type === 'hook' ? 'opening' : type === 'cta' ? 'ending' : 'body';
-    setAiTab('chat');
-    void quickAi(prompts[type], section);
+    const blockType: BlockType = type === 'intro' || type === 'full' ? 'body' : type;
+    addBlock(blockType, undefined, templates[type]);
+    setNotice('Đã chèn gợi ý vào kịch bản.');
   }
 
   function mentionedTechniqueIds(message: string) {
@@ -1767,58 +1531,17 @@ export function ScriptWriterPanel() {
   }
 
   function renderSettingsPanel() {
-    const promptSummary = SECTION_ORDER.map((section) => studioSetup.sections[section].label).join(' · ');
-    const aiSummary = [
-      aiCustomerName.trim() || 'Chưa đặt tên khách',
-      aiProvider === 'openai' ? 'OpenAI' : aiProvider === 'groq' ? 'Groq' : 'Gemini',
-      aiModel.replace(/^models\//, ''),
-    ].join(' · ');
-    const techniqueSummary = techniques.length
-      ? techniques.map((item) => `@${item.name}`).slice(0, 4).join(' ') + (techniques.length > 4 ? ` +${techniques.length - 4}` : '')
-      : 'Chưa có kỹ thuật';
-
     return (
       <div className="script-ai-settings-tab">
-        <BusinessProfilePanel embedded compact />
+        <BusinessProfilePanel embedded />
 
-        <SettingsSectionCard
-          icon="✨"
-          title="Cài đặt Prompt"
-          summary={promptSummary}
-          hint="Hook · Mở đầu · CTA"
-          onOpen={() => setSettingsModal('prompt')}
-        />
-
-        <SettingsSectionCard
-          icon="🤖"
-          title="Cấu hình AI theo khách"
-          summary={aiSummary}
-          hint={aiKeyMasked ? `API key: ${aiKeyMasked}` : 'Chưa lưu API key'}
-          onOpen={() => setSettingsModal('ai')}
-        />
-
-        <SettingsSectionCard
-          icon="📚"
-          title="Kỹ thuật content"
-          summary={techniqueSummary}
-          hint={`${techniques.length} kỹ thuật · gõ @ khi chat AI`}
-          onOpen={() => setSettingsModal('techniques')}
-        />
-
-        <SettingsFormModal
-          open={settingsModal === 'prompt'}
-          title="Cài đặt Prompt"
-          wide
-          onClose={() => setSettingsModal(null)}
-          footer={(
-            <div className="settings-modal-actions">
-              {setupStatus ? <span className="profile-status">{setupStatus}</span> : <span />}
-              <button type="button" className="script-primary compact" disabled={setupBusy} onClick={() => void saveStudioSetup()}>
-                <Save /> Lưu rule
-              </button>
-            </div>
-          )}
-        >
+        <div className="script-settings-card">
+          <div className="script-tech-head">
+            <div><Wand2 /><strong>Cài đặt Prompt</strong></div>
+            <button type="button" className="script-primary compact" disabled={setupBusy} onClick={() => void saveStudioSetup()}>
+              <Save /> Lưu rule
+            </button>
+          </div>
           <div className="script-settings-grid">
             {SECTION_ORDER.map((section) => {
               const row = studioSetup.sections[section];
@@ -1844,101 +1567,71 @@ export function ScriptWriterPanel() {
               );
             })}
           </div>
-        </SettingsFormModal>
+          {setupStatus ? <p className="script-tech-status">{setupStatus}</p> : null}
+        </div>
 
-        <SettingsFormModal
-          open={settingsModal === 'ai'}
-          title="Cấu hình AI theo khách"
-          onClose={() => setSettingsModal(null)}
-          footer={(
-            <div className="settings-modal-actions">
-              {aiConfigStatus ? <span className="profile-status">{aiConfigStatus}</span> : <span />}
-              <div className="settings-modal-actions-buttons">
-                <button type="button" title="Tải lại" disabled={aiConfigBusy} onClick={() => void loadAiConfig()}>
-                  <RefreshCw size={14} /> Tải lại
-                </button>
-                <button type="button" disabled={aiConfigBusy} onClick={() => void testAiConfig()}>
-                  <Sparkles size={14} /> Test
-                </button>
-                <button type="button" className="script-primary compact" disabled={aiConfigBusy} onClick={() => void saveAiConfig()}>
-                  <Save /> Lưu AI
-                </button>
-              </div>
-            </div>
-          )}
-        >
+        <div className="script-ai-config-card">
+          <div className="script-tech-head">
+            <div><Bot /><strong>Cấu hình AI theo khách</strong></div>
+            <button type="button" title="Tải lại" disabled={aiConfigBusy} onClick={() => void loadAiConfig()}><RefreshCw /></button>
+          </div>
           <div className="script-ai-config-grid">
-            <div className="profile-field full">
-              <label>Tên khách / thương hiệu</label>
-              <input value={aiCustomerName} onChange={(event) => setAiCustomerName(event.target.value)} placeholder="Tên khách / thương hiệu" />
-            </div>
-            <div className="profile-field">
-              <label>Provider</label>
-              <select
-                value={aiProvider}
-                onChange={(event) => {
-                  const provider = event.target.value;
-                  setAiProvider(provider);
-                  setAiModel(DEFAULT_MODELS[provider] || DEFAULT_MODELS.gemini);
-                  setAiModels(fallbackModels(provider));
-                  setAiKeyMasked('');
-                  void loadAiModels(provider);
-                }}
-              >
-                <option value="gemini">Google Gemini</option>
-                <option value="openai">OpenAI / ChatGPT API</option>
-                <option value="groq">Groq</option>
-              </select>
-            </div>
-            <div className="profile-field">
-              <label>Model</label>
-              <select value={aiModel} onChange={(event) => setAiModel(event.target.value)}>
-                {aiModels.map((item) => (
-                  <option key={item.id} value={item.id}>{item.display_name || item.id}</option>
-                ))}
-              </select>
-            </div>
-            <div className="profile-field full">
-              <label>API key</label>
-              <input value={aiKeyInput} onChange={(event) => setAiKeyInput(event.target.value)} placeholder={aiKeyMasked ? `Đã lưu ${aiKeyMasked}` : 'Nhập API key'} />
-            </div>
-          </div>
-        </SettingsFormModal>
-
-        <SettingsFormModal
-          open={settingsModal === 'techniques'}
-          title="Kỹ thuật content"
-          wide
-          onClose={() => setSettingsModal(null)}
-          footer={techniqueStatus ? <span className="profile-status">{techniqueStatus}</span> : undefined}
-        >
-          <div className="script-tech-manager modal-inner">
-            <div className="script-tech-form">
-              <input value={techniqueName} onChange={(event) => setTechniqueName(event.target.value)} placeholder="Tên kỹ thuật, VD: AIDA" />
-              <textarea value={techniqueContent} onChange={(event) => setTechniqueContent(event.target.value)} placeholder="Nội dung rule của kỹ thuật" rows={3} />
-              <button type="button" className="script-primary compact" disabled={techniqueBusy} onClick={() => void addTechnique()}>
-                <Plus /> Lưu kỹ thuật
-              </button>
-            </div>
-            <div className="script-tech-list">
-              {techniques.map((technique) => (
-                <button
-                  type="button"
-                  key={technique.id}
-                  className={selectedTechniqueIds.includes(technique.id) ? 'active' : ''}
-                  title={technique.content}
-                  onClick={() => setSelectedTechniqueIds((ids) => (ids.includes(technique.id) ? ids.filter((id) => id !== technique.id) : [...ids, technique.id]))}
-                >
-                  <span>@{technique.name}</span>
-                  {!technique.system ? <em onClick={(event) => { event.stopPropagation(); void deleteTechnique(technique.id); }}>x</em> : null}
-                </button>
+            <input value={aiCustomerName} onChange={(event) => setAiCustomerName(event.target.value)} placeholder="Tên khách / thương hiệu" />
+            <select
+              value={aiProvider}
+              onChange={(event) => {
+                const provider = event.target.value;
+                setAiProvider(provider);
+                setAiModel(DEFAULT_MODELS[provider] || DEFAULT_MODELS.gemini);
+                setAiModels(fallbackModels(provider));
+                setAiKeyMasked('');
+                void loadAiModels(provider);
+              }}
+            >
+              <option value="gemini">Google Gemini</option>
+              <option value="openai">OpenAI / ChatGPT API</option>
+              <option value="groq">Groq</option>
+            </select>
+            <select value={aiModel} onChange={(event) => setAiModel(event.target.value)}>
+              {aiModels.map((item) => (
+                <option key={item.id} value={item.id}>{item.display_name || item.id}</option>
               ))}
-            </div>
-            <button type="button" className="settings-inline-reload" disabled={techniqueBusy} onClick={() => void loadTechniques()}>
-              <RefreshCw size={14} /> Tải lại danh sách
-            </button>
+            </select>
+            <input value={aiKeyInput} onChange={(event) => setAiKeyInput(event.target.value)} placeholder={aiKeyMasked ? `Đã lưu ${aiKeyMasked}` : 'Nhập API key'} />
           </div>
-        </SettingsFormModal>
+          <div className="script-ai-config-actions">
+            <button type="button" className="script-primary compact" disabled={aiConfigBusy} onClick={() => void saveAiConfig()}><Save /> Lưu AI</button>
+            <button type="button" disabled={aiConfigBusy} onClick={() => void testAiConfig()}><Sparkles /> Test</button>
+          </div>
+          {aiConfigStatus ? <p className="script-tech-status">{aiConfigStatus}</p> : null}
+        </div>
+
+        <div className="script-tech-manager">
+          <div className="script-tech-head">
+            <div><Database /><strong>Kỹ thuật content</strong></div>
+            <button type="button" title="Tải lại" disabled={techniqueBusy} onClick={() => void loadTechniques()}><RefreshCw /></button>
+          </div>
+          <div className="script-tech-form">
+            <input value={techniqueName} onChange={(event) => setTechniqueName(event.target.value)} placeholder="Tên kỹ thuật, VD: AIDA" />
+            <textarea value={techniqueContent} onChange={(event) => setTechniqueContent(event.target.value)} placeholder="Nội dung rule của kỹ thuật" rows={3} />
+            <button type="button" className="script-primary compact" disabled={techniqueBusy} onClick={() => void addTechnique()}><Plus /> Lưu kỹ thuật</button>
+          </div>
+          <div className="script-tech-list">
+            {techniques.map((technique) => (
+              <button
+                type="button"
+                key={technique.id}
+                className={selectedTechniqueIds.includes(technique.id) ? 'active' : ''}
+                title={technique.content}
+                onClick={() => setSelectedTechniqueIds((ids) => (ids.includes(technique.id) ? ids.filter((id) => id !== technique.id) : [...ids, technique.id]))}
+              >
+                <span>@{technique.name}</span>
+                {!technique.system ? <em onClick={(event) => { event.stopPropagation(); void deleteTechnique(technique.id); }}>x</em> : null}
+              </button>
+            ))}
+          </div>
+          {techniqueStatus ? <p className="script-tech-status">{techniqueStatus}</p> : null}
+        </div>
       </div>
     );
   }
@@ -1991,30 +1684,16 @@ export function ScriptWriterPanel() {
                 </div>
               </button>
               <div className="script-list-actions">
-                <button
-                  type="button"
-                  className="script-list-edit"
-                  title="Mở task trên Kế hoạch"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    openPlanForScript(script.id, { edit: true });
-                  }}
-                >
+                <button type="button" className="script-list-edit" title="Sửa kịch bản" onClick={() => editScript(script.id)}>
                   <Pencil /> Sửa
                 </button>
-                <button type="button" className="script-list-delete" title="Xóa kịch bản" onClick={(event) => { event.stopPropagation(); deleteScript(script.id); }}>
+                <button type="button" className="script-list-delete" title="Xóa kịch bản" onClick={() => deleteScript(script.id)}>
                   <Trash2 /> Xóa
                 </button>
               </div>
             </div>
           ))}
-          {!loaded ? (
-            <div className="script-empty-list">Đang tải kịch bản...</div>
-          ) : syncError && !scripts.length ? (
-            <div className="script-empty-list script-sync-error">{syncError}</div>
-          ) : !visibleScripts.length ? (
-            <div className="script-empty-list">Không tìm thấy kịch bản.</div>
-          ) : null}
+          {!visibleScripts.length ? <div className="script-empty-list">Không tìm thấy kịch bản.</div> : null}
         </div>
       </aside>
 
@@ -2034,41 +1713,35 @@ export function ScriptWriterPanel() {
                 <option>Reels</option>
                 <option>Facebook</option>
               </select>
+              <span className={`script-status-badge ${selected.status}`}>
+                {selected.status === 'approved' ? <Check /> : null}
+                {STATUS_LABELS[selected.status]}
+              </span>
               <select className="script-status-select" value={selected.status} onChange={(event) => updateSelected((script) => ({ ...script, status: event.target.value as ScriptStatus }))} aria-label="Trạng thái">
                 <option value="draft">Nháp</option>
                 <option value="pending">Chờ duyệt</option>
                 <option value="approved">Đã duyệt</option>
               </select>
-              <div className="script-editor-toolbar">
-                <button
-                  type="button"
-                  className="script-save plan-link"
-                  title={selected.plan_task_title ? `Task kế hoạch: ${selected.plan_task_title}` : 'Mở task trên Kế hoạch content'}
-                  onClick={() => openPlanForScript(selected.id)}
-                >
-                  <CalendarDays /> Kế hoạch
-                </button>
-                <button type="button" className="script-save" onClick={() => saveNow(true)}><Save /> Lưu bài</button>
-                <button type="button" className="script-save review" onClick={() => void saveCurrentWithStatus('pending', 'Đã gửi duyệt. Task đã chuyển sang Chờ duyệt.')}><SendHorizontal /> Gửi duyệt</button>
-                {selected.status === 'pending' ? (
-                  <button type="button" className="script-save approve" onClick={() => void saveCurrentWithStatus('approved', 'Đã duyệt bài và lưu vào Bài đã duyệt.')}><Check /> Duyệt</button>
-                ) : null}
-                <button type="button" className="script-icon-button" title="Xuất file" onClick={exportScript}><FileDown /></button>
-                <button type="button" className="script-icon-button" title="Copy" onClick={() => void copyCompleteVersion()}><Clipboard /></button>
-                <button type="button" className="script-icon-button" title="Xóa kịch bản" onClick={() => deleteScript(selected.id)}><Trash2 /></button>
-                <button type="button" className={`script-icon-button${showAi ? ' active' : ''}`} title="Trợ lý AI" onClick={() => setShowAi((value) => !value)}><Bot /></button>
-              </div>
+              <button type="button" className="script-save" onClick={() => void saveScripts(scripts, true)}><Save /> Lưu bài</button>
+              <button type="button" className="script-save review" onClick={() => void saveCurrentWithStatus('pending', 'Đã gửi duyệt. Task đã chuyển sang Chờ duyệt.')}><SendHorizontal /> Gửi duyệt</button>
+              {selected.status === 'pending' ? (
+                <button type="button" className="script-save approve" onClick={() => void saveCurrentWithStatus('approved', 'Đã duyệt bài và lưu vào Bài đã duyệt.')}><Check /> Duyệt</button>
+              ) : null}
+              <button type="button" className="script-icon-button" title="Xuất file" onClick={exportScript}><FileDown /></button>
+              <button type="button" className="script-icon-button" title="Copy" onClick={() => void copyCompleteVersion()}><Clipboard /></button>
+              <button type="button" className="script-icon-button" title="Xóa kịch bản" onClick={() => { setScripts((rows) => rows.filter((script) => script.id !== selected.id)); setSelectedId(scripts.find((script) => script.id !== selected.id)?.id || ''); }}><Trash2 /></button>
+              <button type="button" className={`script-icon-button${showAi ? ' active' : ''}`} title="Trợ lý AI" onClick={() => setShowAi((value) => !value)}><Bot /></button>
             </div>
             <div className="script-editor-meta script-doc-hint">
               <span>{wordCount} từ</span>
               <span>{selected.blocks.length} blocks</span>
+              <span className="script-doc-hint-muted">kéo / đổi loại</span>
+              <span className="script-doc-hint-muted">đổi text → định dạng</span>
+              <span className={syncError ? 'script-sync-error' : 'script-doc-hint-muted'} title={syncError || syncWarning}>{syncError || syncStatus}</span>
               <div className="script-editor-copy">
                 <button type="button" onClick={() => setShowFbPreview((v) => !v)}>{showFbPreview ? 'Ẩn FB' : 'Xem FB'}</button>
                 <button type="button" onClick={printCompleteVersion}><Printer /> In</button>
               </div>
-              <span className={syncError ? 'script-sync-error script-sync-line' : 'script-sync-line script-doc-hint-muted'} title={syncError || syncWarning || syncStatus}>
-                {syncError || syncStatus}
-              </span>
             </div>
 
             {showFbPreview && facebookPost ? (
@@ -2100,28 +1773,24 @@ export function ScriptWriterPanel() {
                   <div className={`script-block-card tone-${v3.tone} block-${block.type}`} key={block.id}>
                     <div className="script-block-accent" aria-hidden="true" />
                     <div className="script-block-card-inner">
+                      <div className="script-block-card-head">
+                        <GripVertical className="script-drag" />
+                        <span className="script-block-label">{v3.label}</span>
+                        <select className="script-block-type-mini" value={block.type} onChange={(event) => updateBlock(block.id, { type: event.target.value as BlockType })} aria-label="Loại block">
+                          {BLOCK_TYPES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                        </select>
+                        <div className="script-block-actions">
+                          <button type="button" title="Lên" disabled={index === 0} onClick={() => moveBlock(index, -1)}><ChevronUp /></button>
+                          <button type="button" title="Xuống" disabled={index === selected.blocks.length - 1} onClick={() => moveBlock(index, 1)}><ChevronDown /></button>
+                          <button type="button" title="Nhân bản" onClick={() => duplicateBlock(block, index)}><Copy /></button>
+                          <button type="button" title="Xóa block" onClick={() => removeBlock(block.id)}><X /></button>
+                        </div>
+                      </div>
                       <ScriptBlockEditor
                         block={block}
                         placeholder={definition.placeholder}
                         onChange={(patch) => updateBlock(block.id, patch)}
-                        onBlurSave={handleEditorBlurSave}
-                        compactChrome={(
-                          <>
-                            <GripVertical className="script-drag" />
-                            <span className="script-block-label">{v3.label}</span>
-                            <select className="script-block-type-mini" value={block.type} onChange={(event) => updateBlock(block.id, { type: event.target.value as BlockType })} aria-label="Loại block">
-                              {BLOCK_TYPES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-                            </select>
-                          </>
-                        )}
-                        compactTrailing={(
-                          <div className="script-block-actions">
-                            <button type="button" title="Lên" disabled={index === 0} onClick={() => moveBlock(index, -1)}><ChevronUp /></button>
-                            <button type="button" title="Xuống" disabled={index === selected.blocks.length - 1} onClick={() => moveBlock(index, 1)}><ChevronDown /></button>
-                            <button type="button" title="Nhân bản" onClick={() => duplicateBlock(block, index)}><Copy /></button>
-                            <button type="button" title="Xóa block" onClick={() => removeBlock(block.id)}><X /></button>
-                          </div>
-                        )}
+                        minimal
                       />
                     </div>
                   </div>
@@ -2140,8 +1809,6 @@ export function ScriptWriterPanel() {
               ) : null}
             </div>
           </>
-        ) : selectedId && !detailsLoaded ? (
-          <div className="script-empty-editor full"><RefreshCw /><h3>Đang tải nội dung kịch bản...</h3><p>Vui lòng chờ nội dung đầy đủ trước khi chỉnh sửa.</p></div>
         ) : (
           <div className="script-empty-editor full"><Sparkles /><h3>Chọn hoặc tạo kịch bản mới</h3></div>
         )}
@@ -2179,10 +1846,10 @@ export function ScriptWriterPanel() {
                       <Wand2 /> Viết toàn bài
                     </button>
                     <button type="button" disabled={chatBusy} onClick={() => addAiTemplate('hook')}>
-                      <AtSign /> Gợi ý Hook (AI)
+                      <AtSign /> Thêm Hook mẫu
                     </button>
                     <button type="button" disabled={chatBusy} onClick={() => addAiTemplate('cta')}>
-                      <MessageSquare /> Gợi ý CTA (AI)
+                      <MessageSquare /> Thêm CTA mẫu
                     </button>
                     <button type="button" disabled={chatBusy} onClick={() => { setAiTab('chat'); quickAi(`Chỉ tạo image_prompt mô tả ảnh minh họa cho bài "${selected?.title || 'nội dung này'}". Không sửa HOOK/BODY/CTA, action none, sections để rỗng.`); }}>
                       <Sparkles /> Prompt ảnh
@@ -2202,7 +1869,7 @@ export function ScriptWriterPanel() {
                       <Wand2 /> 3 góc ý tưởng
                     </button>
                     <button type="button" disabled={chatBusy} onClick={() => addAiTemplate('hook')}>
-                      <Plus /> Gợi ý hook (AI)
+                      <Plus /> Chèn hook mẫu
                     </button>
                   </div>
                 </div>

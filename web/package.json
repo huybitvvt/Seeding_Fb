@@ -16,8 +16,7 @@
     "material-symbols": "^0.45.2",
     "next": "^15.5.7",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "write-excel-file": "^4.1.1"
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
