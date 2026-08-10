@@ -28,18 +28,56 @@ before update on public.app_kv
 for each row
 execute function public.set_app_kv_updated_at();
 
--- Project này dùng backend riêng. Nếu chưa dùng service role, tắt RLS cho app_kv
--- để publishable/anon key mà backend đang cầm có thể ghi được.
-alter table public.app_kv disable row level security;
-
 grant usage on schema public to anon, authenticated, service_role;
 grant select, insert, update, delete on public.app_kv to anon, authenticated, service_role;
+
+-- Publishable/anon key đi qua RLS. Tạo policy rõ ràng để REST API ghi được
+-- kể cả khi project vẫn đang bật RLS ở API connection.
+alter table public.app_kv enable row level security;
+
+drop policy if exists "app_kv_select_all" on public.app_kv;
+create policy "app_kv_select_all"
+on public.app_kv
+for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "app_kv_insert_all" on public.app_kv;
+create policy "app_kv_insert_all"
+on public.app_kv
+for insert
+to anon, authenticated
+with check (true);
+
+drop policy if exists "app_kv_update_all" on public.app_kv;
+create policy "app_kv_update_all"
+on public.app_kv
+for update
+to anon, authenticated
+using (true)
+with check (true);
+
+drop policy if exists "app_kv_delete_all" on public.app_kv;
+create policy "app_kv_delete_all"
+on public.app_kv
+for delete
+to anon, authenticated
+using (true);
 
 notify pgrst, 'reload schema';
 
 select
   c.relname as table_name,
-  c.relrowsecurity as rls_enabled
+  c.relrowsecurity as rls_enabled,
+  c.relforcerowsecurity as rls_forced
 from pg_class c
 join pg_namespace n on n.oid = c.relnamespace
 where n.nspname = 'public' and c.relname = 'app_kv';
+
+select
+  policyname,
+  cmd,
+  roles
+from pg_policies
+where schemaname = 'public' and tablename = 'app_kv'
+order by policyname;

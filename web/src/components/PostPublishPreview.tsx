@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { APP_BRAND } from '@/lib/app-brand';
+import { buildFacebookPostMessage } from '@/lib/facebook-post-message';
 import { resolveMediaPreview } from '@/lib/post-media-preview';
 
 type MediaItem = { url: string; type?: 'image' | 'video'; name?: string };
@@ -36,8 +38,7 @@ export function PostPublishPreview({
   const [brokenImage, setBrokenImage] = useState(false);
 
   const previewText = useMemo(() => {
-    const chunks = [title.trim(), content.trim(), hashtags.trim()].filter(Boolean);
-    return chunks.join('\n\n');
+    return buildFacebookPostMessage({ title, content, hashtags });
   }, [title, content, hashtags]);
 
   const primaryUpload = postMedia[0];
@@ -67,7 +68,7 @@ export function PostPublishPreview({
             {(authorName || 'S').slice(0, 1).toUpperCase()}
           </div>
           <div>
-            <b>{authorName || 'Seeding Fsolution'}</b>
+            <b>{authorName || APP_BRAND.name}</b>
             <small>{scheduledAt ? `Lên lịch · ${formatSchedule(scheduledAt)}` : 'Vừa xong · 🌐'}</small>
           </div>
         </header>

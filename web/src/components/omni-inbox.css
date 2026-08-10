@@ -13,7 +13,7 @@
   --omni-outline: #777587;
   --omni-outline-variant: #c7c4d8;
   --omni-error: #ba1a1a;
-  font-family: var(--font-inter), var(--font-roboto), system-ui, sans-serif;
+  font-family: var(--font-roboto), Roboto, Arial, sans-serif;
   color: var(--omni-on-surface);
   background: var(--omni-surface);
   border: 1px solid var(--omni-outline-variant);
@@ -64,7 +64,7 @@
 }
 
 .omni-brand {
-  font-family: var(--font-hanken-grotesk), var(--font-inter), sans-serif;
+  font-family: var(--font-roboto), Roboto, Arial, sans-serif;
   font-size: 20px;
   font-weight: 700;
   color: var(--omni-primary);
@@ -227,7 +227,7 @@
 }
 
 .omni-sidebar-head p:first-child {
-  font-family: var(--font-hanken-grotesk), var(--font-inter), sans-serif;
+  font-family: var(--font-roboto), Roboto, Arial, sans-serif;
   font-size: 16px;
   font-weight: 700;
 }
@@ -384,7 +384,7 @@
 }
 
 .omni-stream-head h2 {
-  font-family: var(--font-hanken-grotesk), var(--font-inter), sans-serif;
+  font-family: var(--font-roboto), Roboto, Arial, sans-serif;
   font-size: 16px;
   font-weight: 600;
 }
@@ -463,7 +463,7 @@
 .omni-stream-item-top small {
   font-size: 10px;
   color: var(--omni-outline);
-  font-family: var(--font-jetbrains-mono), monospace;
+  font-family: var(--font-roboto), Roboto, Arial, sans-serif;
 }
 
 .omni-channel-chip {
@@ -568,7 +568,7 @@
 }
 
 .omni-thread-user h2 {
-  font-family: var(--font-hanken-grotesk), var(--font-inter), sans-serif;
+  font-family: var(--font-roboto), Roboto, Arial, sans-serif;
   font-size: 16px;
   font-weight: 600;
 }
@@ -670,7 +670,7 @@
   word-break: break-all;
 }
 
-.omni-meta-grid .mono { font-family: var(--font-jetbrains-mono), monospace; }
+.omni-meta-grid .mono { font-family: var(--font-roboto), Roboto, Arial, sans-serif; }
 
 .omni-stream-phone {
   display: inline-flex;
@@ -695,7 +695,7 @@
 }
 
 .omni-stream-post .mono {
-  font-family: var(--font-jetbrains-mono), monospace;
+  font-family: var(--font-roboto), Roboto, Arial, sans-serif;
   font-size: 10px;
   color: #475569;
 }
@@ -967,7 +967,7 @@
 }
 
 .omni-stats-hero h2 {
-  font-family: var(--font-hanken-grotesk), var(--font-inter), sans-serif;
+  font-family: var(--font-roboto), Roboto, Arial, sans-serif;
   font-size: 24px;
   font-weight: 700;
   color: var(--omni-on-surface);
@@ -1028,7 +1028,7 @@
 }
 
 .omni-stats-panel-head h3 {
-  font-family: var(--font-hanken-grotesk), var(--font-inter), sans-serif;
+  font-family: var(--font-roboto), Roboto, Arial, sans-serif;
   font-size: 16px;
   font-weight: 600;
 }
@@ -1125,7 +1125,7 @@
 
 .omni-workflow-ring-center b {
   display: block;
-  font-family: var(--font-hanken-grotesk), var(--font-inter), sans-serif;
+  font-family: var(--font-roboto), Roboto, Arial, sans-serif;
   font-size: 28px;
   color: var(--omni-primary);
 }
@@ -1217,7 +1217,7 @@
 
 .omni-stat-card b {
   display: block;
-  font-family: var(--font-hanken-grotesk), var(--font-inter), sans-serif;
+  font-family: var(--font-roboto), Roboto, Arial, sans-serif;
   font-size: 28px;
   font-weight: 700;
   color: var(--omni-primary);

@@ -4,7 +4,7 @@
   --md-border: #e2e8f0;
   --md-gap: 8px;
   --md-pad: 10px;
-  font-family: var(--font-manrope), var(--font-roboto), sans-serif;
+  font-family: var(--font-roboto), Roboto, Arial, sans-serif;
   height: 100vh;
   display: flex;
   background: var(--md-surface);

@@ -181,7 +181,7 @@ export function LeadManagerPanel({
           <div className="module-kicker">Lead Hunter · F-Solution</div>
           <h2>Bể Lead CRM</h2>
           <p className="module-sub">
-            Bài bấm <b>Đã xử lý</b> tại /quan-ly sẽ tự động chuyển sang đây kèm điểm Lead và người xử lý.
+            Bài đã bình luận hoặc bấm <b>Đã xử lý</b> sẽ tự động chuyển vào đây và gắn đúng Sale phụ trách.
           </p>
         </div>
         <div className="module-actions">
@@ -411,7 +411,7 @@ export function LeadManagerPanel({
                 <td colSpan={14} className="table-empty">
                   {rows.length
                     ? 'Không có lead phù hợp bộ lọc. Thử bỏ lọc hoặc đổi điều kiện.'
-                    : 'Chưa có lead. Vào /quan-ly, bấm Đã xử lý trên bài viết — lead sẽ tự xuất hiện tại đây.'}
+                    : 'Chưa có lead. Bình luận hoặc đánh dấu xử lý một bài viết để tự động tạo lead.'}
                 </td>
               </tr>
             )}

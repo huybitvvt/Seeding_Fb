@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Archive, FileText, Plus, RotateCcw, Trash2, X } from 'lucide-react';
+import { Archive, Clock3, FileText, MessageSquare, Pencil, Plus, RotateCcw, SendHorizontal, Trash2, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { viewToPath } from '@/lib/app-routes';
+import type { StaffAccount } from '@/lib/types';
 import './content-plan-panel.css';
 
 type PlanColumn = 0 | 1 | 2 | 3;
@@ -12,12 +13,19 @@ type PlanTaskStatus = 'todo' | 'doing' | 'pending' | 'approved' | 'archived';
 
 type PlanScriptStatus = 'draft' | 'pending' | 'approved';
 
+type PlanScriptBlock = {
+  id: string;
+  type: string;
+  text: string;
+};
+
 type PlanScript = {
   id: string;
   title: string;
   platform: string;
   status: PlanScriptStatus;
   writer: string;
+  blocks?: PlanScriptBlock[];
 };
 
 type PlanTask = {
@@ -38,11 +46,10 @@ type PlanTask = {
 type ArchivedTask = PlanTask & { archivedAt: string };
 
 type PlanMember = {
-  id: number;
+  id: string;
   name: string;
   role: string;
   color: string;
-  kpi: { t: number; d: number };
 };
 
 type PlanViewMode = 'all' | 'todo' | 'doing' | 'done' | 'archive';
@@ -59,12 +66,16 @@ const KANBAN_COLUMNS: Array<{ id: PlanColumn; label: string; color: string }> = 
   { id: 3, label: 'Xong', color: '#10B981' },
 ];
 
-const DEFAULT_MEMBERS: PlanMember[] = [
-  { id: 1, name: 'An', role: 'Content Writer', color: MEMBER_COLORS[0], kpi: { t: 15, d: 10 } },
-  { id: 2, name: 'Bình', role: 'Script Writer', color: MEMBER_COLORS[1], kpi: { t: 12, d: 7 } },
-  { id: 3, name: 'Chi', role: 'Editor', color: MEMBER_COLORS[2], kpi: { t: 10, d: 6 } },
-  { id: 4, name: 'Dung', role: 'Designer', color: MEMBER_COLORS[3], kpi: { t: 8, d: 5 } },
-];
+function staffRowsToMembers(rows: StaffAccount[]): PlanMember[] {
+  return rows
+    .filter((item) => item.enabled !== false && String(item.name || item.username || '').trim())
+    .map((item, index) => ({
+      id: String(item.id || item.username || index),
+      name: String(item.name || item.username || '').trim(),
+      role: item.role === 'admin' ? 'Admin' : 'Nhân sự',
+      color: MEMBER_COLORS[index % MEMBER_COLORS.length],
+    }));
+}
 
 const DEFAULT_TASKS: PlanTask[] = [
   { id: 't1', col: 0, title: 'Kế hoạch content tuần 3', assignee: 'Dung', dl: '2026-06-15', pri: '🟡', color: MEMBER_COLORS[3] },
@@ -81,8 +92,18 @@ function newId(prefix: string) {
 
 function parseDate(value: string) {
   if (!value || value === '--') return null;
-  const date = new Date(value);
+  const iso = /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
+  const date = new Date(iso || value);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function dlToInputValue(dl: string) {
+  const date = parseDate(dl);
+  if (!date) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function deadlineClass(dl: string) {
@@ -151,9 +172,43 @@ function statusFromCol(col: PlanColumn): PlanTaskStatus {
   return 'todo';
 }
 
+function formatLogTime(value: string) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('vi-VN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
+
+function scriptIdForTask(task: PlanTask) {
+  if (task.script_id) return task.script_id;
+  if (task.id.startsWith('task-')) return `script-${task.id.slice(5)}`;
+  return '';
+}
+
+function scriptStatusLabel(status: PlanScriptStatus) {
+  if (status === 'approved') return 'Đã duyệt';
+  if (status === 'pending') return 'Chờ duyệt';
+  return 'Nháp';
+}
+
+function scriptPreview(script: PlanScript, maxLen = 140) {
+  const parts = (script.blocks || [])
+    .map((block) => String(block.text || '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  const text = parts.join(' · ') || 'Chưa có nội dung — bấm để viết kịch bản';
+  return text.length > maxLen ? `${text.slice(0, maxLen)}…` : text;
+}
+
 function findScriptForTask(task: PlanTask, scripts: PlanScript[]) {
-  if (task.script_id) {
-    const linked = scripts.find((item) => item.id === task.script_id);
+  const scriptId = scriptIdForTask(task);
+  if (scriptId) {
+    const linked = scripts.find((item) => item.id === scriptId);
     if (linked) return linked;
   }
   const taskTitle = normalizePlanTitle(task.title);
@@ -167,24 +222,22 @@ function findScriptForTask(task: PlanTask, scripts: PlanScript[]) {
 type StoredPlan = {
   tasks: PlanTask[];
   archived: ArchivedTask[];
-  members: PlanMember[];
 };
 
 function readStoredPlan(): StoredPlan {
   if (typeof window === 'undefined') {
-    return { tasks: DEFAULT_TASKS, archived: [], members: DEFAULT_MEMBERS };
+    return { tasks: DEFAULT_TASKS, archived: [] };
   }
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { tasks: DEFAULT_TASKS, archived: [], members: DEFAULT_MEMBERS };
+    if (!raw) return { tasks: DEFAULT_TASKS, archived: [] };
     const parsed = JSON.parse(raw) as Partial<StoredPlan>;
     return {
       tasks: Array.isArray(parsed.tasks) && parsed.tasks.length ? parsed.tasks : DEFAULT_TASKS,
       archived: Array.isArray(parsed.archived) ? parsed.archived : [],
-      members: Array.isArray(parsed.members) && parsed.members.length ? parsed.members : DEFAULT_MEMBERS,
     };
   } catch {
-    return { tasks: DEFAULT_TASKS, archived: [], members: DEFAULT_MEMBERS };
+    return { tasks: DEFAULT_TASKS, archived: [] };
   }
 }
 
@@ -192,7 +245,8 @@ export function ContentPlanPanel() {
   const router = useRouter();
   const [tasks, setTasks] = useState<PlanTask[]>(DEFAULT_TASKS);
   const [archived, setArchived] = useState<ArchivedTask[]>([]);
-  const [members] = useState<PlanMember[]>(DEFAULT_MEMBERS);
+  const [members, setMembers] = useState<PlanMember[]>([]);
+  const [membersStatus, setMembersStatus] = useState('Đang tải nhân sự...');
   const [scripts, setScripts] = useState<PlanScript[]>([]);
   const [scriptsStatus, setScriptsStatus] = useState('');
   const [viewMode, setViewMode] = useState<PlanViewMode>('all');
@@ -202,17 +256,39 @@ export function ContentPlanPanel() {
   const [bottomTab, setBottomTab] = useState<BottomTab>('activity');
   const [dragTaskId, setDragTaskId] = useState<string | null>(null);
   const [showTaskModal, setShowTaskModal] = useState(false);
+  const [editingTaskId, setEditingTaskId] = useState('');
   const [newTitle, setNewTitle] = useState('');
-  const [newAssignee, setNewAssignee] = useState('An');
+  const [newAssignee, setNewAssignee] = useState('');
   const [newCol, setNewCol] = useState<PlanColumn>(0);
   const [newDl, setNewDl] = useState('');
   const [newPri, setNewPri] = useState('🟡');
-  const [newScriptId, setNewScriptId] = useState('');
   const [notice, setNotice] = useState('');
+  const [notesTaskId, setNotesTaskId] = useState('');
+  const [noteText, setNoteText] = useState('');
+  const [noteBusy, setNoteBusy] = useState(false);
+  const [highlightTaskId, setHighlightTaskId] = useState('');
+
+  const reloadScripts = useCallback(async (showCount = true) => {
+    try {
+      const response = await api('/api/scripts', { timeoutMs: 60000 });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || 'Không tải được kịch bản');
+      }
+      const scriptRows = Array.isArray(payload.scripts) ? payload.scripts as PlanScript[] : [];
+      setScripts(scriptRows);
+      if (showCount) {
+        setScriptsStatus(scriptRows.length ? `${scriptRows.length} kịch bản` : 'Chưa có kịch bản');
+      }
+      if (payload.warning) setScriptsStatus(payload.warning);
+    } catch (error) {
+      setScriptsStatus(error instanceof Error ? error.message : 'Không tải được kịch bản');
+    }
+  }, []);
 
   const persist = useCallback((nextTasks: PlanTask[], nextArchived: ArchivedTask[]) => {
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ tasks: nextTasks, archived: nextArchived, members }));
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ tasks: nextTasks, archived: nextArchived }));
     } catch {
       /* ignore */
     }
@@ -226,11 +302,54 @@ export function ContentPlanPanel() {
       if (!response.ok || !payload.ok) {
         throw new Error(payload.error || 'Không lưu được task lên Supabase');
       }
+      if (Array.isArray(payload.tasks) && payload.tasks.length) {
+        setTasks(payload.tasks as PlanTask[]);
+        try {
+          window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ tasks: payload.tasks, archived: nextArchived }));
+        } catch {
+          /* ignore */
+        }
+      }
       if (payload.warning) setScriptsStatus(payload.warning);
+      return payload;
+    }).then(async () => {
+      await reloadScripts(true);
     }).catch((error) => {
       setScriptsStatus(error instanceof Error ? error.message : 'Không lưu được task lên Supabase');
     });
-  }, [members]);
+  }, [reloadScripts]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadStaffMembers() {
+      setMembersStatus('Đang tải nhân sự...');
+      try {
+        const response = await api('/api/staff-cookies', { timeoutMs: 30000 });
+        const payload = await response.json().catch(() => ({}));
+        if (cancelled) return;
+        if (!response.ok) {
+          throw new Error(payload.error || 'Không tải được nhân sự');
+        }
+        const nextMembers = staffRowsToMembers(Array.isArray(payload.staff) ? payload.staff as StaffAccount[] : []);
+        setMembers(nextMembers);
+        setMembersStatus(nextMembers.length ? '' : 'Chưa có nhân sự — thêm tại /nhan-su');
+        if (nextMembers.length) {
+          setNewAssignee((current) => (
+            current && nextMembers.some((member) => member.name === current) ? current : nextMembers[0].name
+          ));
+        }
+        if (payload.warning) {
+          setScriptsStatus((current) => current || String(payload.warning));
+        }
+      } catch (error) {
+        if (cancelled) return;
+        setMembers([]);
+        setMembersStatus(error instanceof Error ? error.message : 'Không tải được nhân sự');
+      }
+    }
+    void loadStaffMembers();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     const stored = readStoredPlan();
@@ -240,74 +359,70 @@ export function ContentPlanPanel() {
 
   useEffect(() => {
     let cancelled = false;
-    async function loadTasks() {
+    async function loadPlanData() {
+      setScriptsStatus('Đang tải...');
       try {
-        const response = await api('/api/content-tasks', { timeoutMs: 30000 });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || !payload.ok) throw new Error(payload.error || 'Không tải được task');
+        const [tasksResponse] = await Promise.all([
+          api('/api/content-tasks?lite=1', { timeoutMs: 30000 }),
+        ]);
+        const tasksPayload = await tasksResponse.json().catch(() => ({}));
         if (cancelled) return;
-        const rows = Array.isArray(payload.tasks) ? payload.tasks as PlanTask[] : [];
+        if (!tasksResponse.ok || !tasksPayload.ok) {
+          throw new Error(tasksPayload.error || 'Không tải được task');
+        }
+        const rows = Array.isArray(tasksPayload.tasks) ? tasksPayload.tasks as PlanTask[] : [];
         if (rows.length) {
           setTasks(rows);
           try {
-            window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ tasks: rows, archived, members }));
+            window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ tasks: rows, archived }));
           } catch {
             /* ignore */
           }
         }
-        if (payload.warning) setScriptsStatus(payload.warning);
-      } catch (error) {
-        if (!cancelled) setScriptsStatus(error instanceof Error ? error.message : 'Không tải được task từ Supabase');
-      }
-    }
-    void loadTasks();
-    return () => { cancelled = true; };
-  }, [archived, members]);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadScripts() {
-      setScriptsStatus('Đang tải kịch bản...');
-      try {
-        const response = await api('/api/scripts', { timeoutMs: 20000 });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || !payload.ok) throw new Error(payload.error || 'Không tải được kịch bản');
-        if (cancelled) return;
-        const rows = Array.isArray(payload.scripts) ? payload.scripts as PlanScript[] : [];
-        setScripts(rows);
-        setScriptsStatus(rows.length ? `${rows.length} kịch bản` : 'Chưa có kịch bản');
+        if (!cancelled) await reloadScripts(true);
+        const warning = tasksPayload.warning ? String(tasksPayload.warning) : '';
+        if (warning) setScriptsStatus(warning);
       } catch (error) {
         if (!cancelled) {
-          setScriptsStatus(error instanceof Error ? error.message : 'Không tải được kịch bản');
+          setScriptsStatus(error instanceof Error ? error.message : 'Không tải được dữ liệu kế hoạch');
         }
       }
     }
-    void loadScripts();
+    void loadPlanData();
     return () => { cancelled = true; };
-  }, []);
+  }, [archived, reloadScripts]);
 
   useEffect(() => {
     if (!scripts.length) return;
-    setTasks((prev) => {
-      let changed = false;
-      const next = prev.map((task) => {
-        const script = findScriptForTask(task, scripts);
-        if (!script) return task;
-        const col = planColFromScriptStatus(script.status);
-        if (task.script_id === script.id && task.col === col) return task;
-        changed = true;
-        return { ...task, script_id: script.id, col, status: statusFromCol(col) };
-      });
-      if (changed) {
-        try {
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ tasks: next, archived, members }));
-        } catch {
-          /* ignore */
-        }
-      }
-      return changed ? next : prev;
+    let changed = false;
+    const next = tasks.map((task) => {
+      const script = findScriptForTask(task, scripts);
+      if (!script) return task;
+      const col = planColFromScriptStatus(script.status);
+      if (task.script_id === script.id && task.col === col) return task;
+      changed = true;
+      return { ...task, script_id: script.id, col, status: statusFromCol(col) };
     });
-  }, [archived, members, scripts]);
+    if (!changed) return;
+    updateTasks(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scripts]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const taskId = params.get('task')?.trim() || '';
+    if (!taskId) return;
+    setHighlightTaskId(taskId);
+    setViewMode('all');
+    window.setTimeout(() => {
+      document.querySelector(`[data-plan-task-id="${taskId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (params.get('edit') === '1') {
+        const task = tasks.find((item) => item.id === taskId);
+        if (task) openEditTask(task);
+      }
+    }, 120);
+  }, [tasks]);
 
   useEffect(() => {
     if (!notice) return;
@@ -346,6 +461,9 @@ export function ContentPlanPanel() {
   function moveTask(taskId: string, col: PlanColumn) {
     const next = tasks.map((task) => (task.id === taskId ? { ...task, col, status: statusFromCol(col) } : task));
     updateTasks(next);
+    if (col === 1 || col === 2) {
+      setNotice(col === 1 ? 'Đã chuyển Đang làm — đồng bộ kịch bản...' : 'Đã chuyển Chờ duyệt — đồng bộ kịch bản...');
+    }
   }
 
   function deleteTask(taskId: string) {
@@ -406,12 +524,22 @@ export function ContentPlanPanel() {
   }
 
   function openTaskModal(col: PlanColumn = 0) {
+    setEditingTaskId('');
     setNewCol(col);
     setNewTitle('');
-    setNewAssignee(members[0]?.name || 'An');
+    setNewAssignee(members[0]?.name || '');
     setNewDl('');
     setNewPri('🟡');
-    setNewScriptId('');
+    setShowTaskModal(true);
+  }
+
+  function openEditTask(task: PlanTask) {
+    setEditingTaskId(task.id);
+    setNewCol(task.col);
+    setNewTitle(task.title);
+    setNewAssignee(task.assignee);
+    setNewDl(dlToInputValue(task.dl));
+    setNewPri(task.pri || '🟡');
     setShowTaskModal(true);
   }
 
@@ -424,48 +552,128 @@ export function ContentPlanPanel() {
     return findScriptForTask(task, scripts);
   }
 
-  async function createScriptForTask(task: PlanTask) {
-    const today = new Date().toLocaleDateString('vi-VN');
-    const newScript: PlanScript & { date: string; blocks: Array<{ id: string; type: string; text: string }> } = {
-      id: newId('script'),
-      title: task.title.replace(/^script\s+/i, '').trim() || task.title,
-      platform: 'TikTok',
-      status: 'draft',
-      writer: task.assignee,
-      date: today,
-      blocks: [{ id: newId('block'), type: 'hook', text: '' }],
+  const notesTask = useMemo(() => tasks.find((task) => task.id === notesTaskId) || null, [notesTaskId, tasks]);
+
+  function openNotes(task: PlanTask) {
+    setNotesTaskId(task.id);
+    setNoteText('');
+    if (task.notes?.length) return;
+    void api(`/api/content-tasks/${encodeURIComponent(task.id)}`, { timeoutMs: 15000 })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.ok || !payload.task) return;
+        const updated = payload.task as PlanTask;
+        setTasks((current) => current.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)));
+      })
+      .catch(() => {
+        /* ignore */
+      });
+  }
+
+  async function sendTaskNote() {
+    const task = notesTask;
+    const text = noteText.trim();
+    if (!task || !text) return;
+
+    const optimisticId = `note-${Date.now()}`;
+    const optimisticNote = {
+      id: optimisticId,
+      text,
+      at: new Date().toISOString(),
+      staff_name: 'Bạn',
     };
+
+    setTasks((current) => current.map((item) => (
+      item.id === task.id
+        ? { ...item, notes: [...(item.notes || []), optimisticNote] }
+        : item
+    )));
+    setNoteText('');
+    setNoteBusy(true);
+
     try {
-      const response = await api('/api/scripts', {
-        method: 'PUT',
+      const response = await api(`/api/content-tasks/${encodeURIComponent(task.id)}/notes`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scripts: [...scripts, newScript] }),
-        timeoutMs: 20000,
+        body: JSON.stringify({ text }),
+        timeoutMs: 15000,
       });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok || !payload.ok) throw new Error(payload.error || 'Không tạo được kịch bản');
-      const rows = Array.isArray(payload.scripts) ? payload.scripts as PlanScript[] : [...scripts, newScript];
-      setScripts(rows);
-      updateTasks(tasks.map((item) => (item.id === task.id ? { ...item, script_id: newScript.id, col: 1, status: statusFromCol(1) } : item)));
-      openScript(newScript.id);
-      setNotice('Đã tạo và mở kịch bản.');
+      if (!response.ok || !payload.ok) throw new Error(payload.error || 'Không lưu được ghi chú');
+      if (payload.task) {
+        const updated = payload.task as PlanTask;
+        setTasks((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+        try {
+          const stored = readStoredPlan();
+          const nextTasks = stored.tasks.map((item) => (item.id === updated.id ? updated : item));
+          window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ tasks: nextTasks, archived }));
+        } catch {
+          /* ignore */
+        }
+      }
+      if (payload.warning) setScriptsStatus(payload.warning);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Không tạo được kịch bản');
+      setTasks((current) => current.map((item) => (
+        item.id === task.id
+          ? { ...item, notes: (item.notes || []).filter((note) => note.id !== optimisticId) }
+          : item
+      )));
+      setNoteText(text);
+      setNotice(error instanceof Error ? error.message : 'Không lưu được ghi chú');
+    } finally {
+      setNoteBusy(false);
+    }
+  }
+
+  async function ensureScriptForTask(task: PlanTask) {
+    try {
+      setNotice('Đang chuẩn bị kịch bản...');
+      const response = await api(`/api/content-tasks/${encodeURIComponent(task.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'doing', col: 1 }),
+        timeoutMs: 30000,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) throw new Error(payload.error || 'Không chuẩn bị được kịch bản');
+
+      const taskRows = Array.isArray(payload.tasks) ? payload.tasks as PlanTask[] : [];
+      const updatedTask = (payload.task as PlanTask | undefined)
+        || taskRows.find((item) => item.id === task.id);
+      if (taskRows.length) setTasks(taskRows);
+
+      const scriptsResponse = await api('/api/scripts', { timeoutMs: 60000 });
+      const scriptsPayload = await scriptsResponse.json().catch(() => ({}));
+      if (!scriptsResponse.ok || !scriptsPayload.ok) {
+        throw new Error(scriptsPayload.error || 'Không tải được kịch bản vừa tạo');
+      }
+      const scriptRows = Array.isArray(scriptsPayload.scripts) ? scriptsPayload.scripts as PlanScript[] : [];
+      setScripts(scriptRows);
+      const scriptId = updatedTask?.script_id
+        || taskRows.find((item) => item.id === task.id)?.script_id
+        || scriptIdForTask(updatedTask || task)
+        || findScriptForTask({ ...task, col: 1, status: 'doing' }, scriptRows)?.id;
+      if (!scriptId) throw new Error('Task chưa liên kết được với kịch bản');
+      openScript(scriptId);
+      setNotice('Đã mở kịch bản của task.');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Không chuẩn bị được kịch bản');
     }
   }
 
   function handleTaskScriptAction(task: PlanTask) {
     const script = resolveTaskScript(task);
-    if (script) {
-      openScript(script.id);
+    const scriptId = script?.id || task.script_id;
+    if (scriptId) {
+      if (task.col === 0) moveTask(task.id, 1);
+      openScript(scriptId);
       return;
     }
-    void createScriptForTask(task);
+    void ensureScriptForTask(task);
   }
 
   function startTask(task: PlanTask) {
-    moveTask(task.id, 1);
-    handleTaskScriptAction({ ...task, col: 1, status: 'doing' });
+    handleTaskScriptAction(task);
   }
 
   function approveTask(task: PlanTask) {
@@ -473,15 +681,18 @@ export function ContentPlanPanel() {
     setNotice('Đã duyệt task.');
   }
 
-  function createTask() {
+  function saveTask() {
     const title = newTitle.trim();
     if (!title) {
       setNotice('Nhập tên task.');
       return;
     }
+    if (!newAssignee) {
+      setNotice('Chưa có nhân sự để giao task. Thêm tại /nhan-su.');
+      return;
+    }
     const member = members.find((item) => item.name === newAssignee);
-    const next: PlanTask = {
-      id: newId('task'),
+    const fields = {
       col: newCol,
       status: statusFromCol(newCol),
       title,
@@ -489,7 +700,18 @@ export function ContentPlanPanel() {
       dl: newDl || '--',
       pri: newPri,
       color: member?.color || MEMBER_COLORS[0],
-      script_id: newScriptId || undefined,
+    };
+    if (editingTaskId) {
+      const next = tasks.map((task) => (task.id === editingTaskId ? { ...task, ...fields } : task));
+      updateTasks(next);
+      setShowTaskModal(false);
+      setEditingTaskId('');
+      setNotice('Đã cập nhật task.');
+      return;
+    }
+    const next: PlanTask = {
+      id: newId('task'),
+      ...fields,
     };
     updateTasks([...tasks, next]);
     setShowTaskModal(false);
@@ -525,7 +747,7 @@ export function ContentPlanPanel() {
       const review = all.filter((task) => task.col === 2).length;
       const todo = all.filter((task) => task.col === 0).length;
       const archivedCount = archived.filter((task) => task.assignee === member.name).length;
-      const kpiPct = Math.min(100, Math.round((member.kpi.d / member.kpi.t) * 100));
+      const kpiPct = Math.min(100, Math.round((done / total) * 100));
       return { member, total, done, doing, review, todo, archivedCount, kpiPct };
     });
   }, [archived, members, tasks]);
@@ -553,6 +775,8 @@ export function ContentPlanPanel() {
             </button>
           ))}
         </div>
+
+        {membersStatus ? <span className="content-plan-members-status">{membersStatus}</span> : null}
 
         {viewMode !== 'archive' ? (
           <>
@@ -643,10 +867,12 @@ export function ContentPlanPanel() {
                   {columnTasks.map((task) => {
                     const badge = deadlineBadge(task.dl);
                     const linkedScript = resolveTaskScript(task);
+                    const showScript = task.col >= 1 || Boolean(linkedScript);
                     return (
                       <div
                         key={task.id}
-                        className={`content-plan-card ${deadlineClass(task.dl)}${linkedScript ? ' has-script' : ''}`}
+                        data-plan-task-id={task.id}
+                        className={`content-plan-card ${deadlineClass(task.dl)}${linkedScript ? ' has-script' : ''}${highlightTaskId === task.id ? ' highlight-task' : ''}`}
                         draggable
                         onDragStart={() => setDragTaskId(task.id)}
                         onDragEnd={() => setDragTaskId(null)}
@@ -660,28 +886,54 @@ export function ContentPlanPanel() {
                           >
                             {task.title}
                           </button>
+                          <div className="content-plan-card-quick">
+                            <button
+                              type="button"
+                              className="content-plan-script-btn"
+                              title={linkedScript ? 'Mở kịch bản' : 'Tạo kịch bản'}
+                              onClick={() => handleTaskScriptAction(task)}
+                            >
+                              <FileText />
+                            </button>
+                            <button
+                              type="button"
+                              className="content-plan-script-btn note"
+                              title="Ghi chú & timeline"
+                              onClick={() => openNotes(task)}
+                            >
+                              <MessageSquare />
+                              {task.notes?.length ? <em>{task.notes.length}</em> : null}
+                            </button>
+                          </div>
+                        </div>
+                        {showScript ? (
                           <button
                             type="button"
-                            className="content-plan-script-btn"
-                            title={linkedScript ? 'Mở kịch bản' : 'Tạo kịch bản'}
+                            className="content-plan-script-preview"
                             onClick={() => handleTaskScriptAction(task)}
+                            title="Mở kịch bản để sửa"
                           >
-                            <FileText />
+                            <span className="content-plan-script-preview-head">
+                              <strong>Kịch bản</strong>
+                              {linkedScript ? (
+                                <em>{scriptStatusLabel(linkedScript.status)}</em>
+                              ) : (
+                                <em>Chưa có</em>
+                              )}
+                            </span>
+                            <p>{linkedScript ? scriptPreview(linkedScript) : 'Bấm để tạo và viết kịch bản cho task này.'}</p>
                           </button>
-                        </div>
-                        {linkedScript ? (
-                          <div className="content-plan-script-chip">
-                            {linkedScript.title} · {linkedScript.status === 'approved' ? 'Đã duyệt' : linkedScript.status === 'pending' ? 'Chờ duyệt' : 'Nháp'}
-                          </div>
                         ) : null}
                         <div className="content-plan-card-meta">
                           <span className="content-plan-avatar sm" style={{ background: task.color }}>{task.assignee[0]}</span>
-                          <span>{task.assignee}</span>
+                          <span className="content-plan-card-assignee">{task.assignee}</span>
                           {badge ? <span className={`content-plan-dl ${badge.tone}`}>{badge.text}</span> : null}
-                          <span>{task.pri}</span>
+                          <span className="content-plan-card-pri">{task.pri}</span>
+                        </div>
+                        <div className="content-plan-card-actions">
                           {column.id === 3 ? (
-                            <button type="button" className="content-plan-icon-btn inline" title="Lưu trữ" onClick={() => archiveTask(task.id)}>
-                              <Archive />
+                            <button type="button" className="content-plan-mini-action" title="Lưu trữ" onClick={() => archiveTask(task.id)}>
+                              <Archive /> Lưu
                             </button>
                           ) : null}
                           {column.id === 0 ? (
@@ -689,23 +941,16 @@ export function ContentPlanPanel() {
                               Đang làm
                             </button>
                           ) : null}
-                          {column.id === 1 ? (
-                            <button type="button" className="content-plan-mini-action" onClick={() => handleTaskScriptAction(task)}>
-                              Sửa
+                          {column.id === 2 ? (
+                            <button type="button" className="content-plan-mini-action approve" onClick={() => approveTask(task)}>
+                              Duyệt
                             </button>
                           ) : null}
-                          {column.id === 2 ? (
-                            <>
-                              <button type="button" className="content-plan-mini-action" onClick={() => handleTaskScriptAction(task)}>
-                                Xem
-                              </button>
-                              <button type="button" className="content-plan-mini-action approve" onClick={() => approveTask(task)}>
-                                Duyệt
-                              </button>
-                            </>
-                          ) : null}
-                          <button type="button" className="content-plan-icon-btn inline" title="Xóa" onClick={() => deleteTask(task.id)}>
-                            <X />
+                          <button type="button" className="content-plan-card-action edit" onClick={() => openEditTask(task)}>
+                            <Pencil /> Sửa
+                          </button>
+                          <button type="button" className="content-plan-card-action delete" onClick={() => deleteTask(task.id)}>
+                            <Trash2 /> Xóa
                           </button>
                         </div>
                       </div>
@@ -733,6 +978,7 @@ export function ContentPlanPanel() {
 
         {bottomTab === 'activity' ? (
           <div className="content-plan-activity-grid">
+            {!members.length ? <p className="content-plan-members-empty">{membersStatus || 'Chưa có nhân sự — thêm tại /nhan-su'}</p> : null}
             {activityCards.map(({ member, status, statusTone, taskTitle }) => (
               <div className="content-plan-activity-card" key={member.id}>
                 <div className="content-plan-avatar" style={{ background: member.color }}>{member.name[0]}</div>
@@ -746,6 +992,7 @@ export function ContentPlanPanel() {
           </div>
         ) : (
           <div className="content-plan-perf">
+            {!members.length ? <p className="content-plan-members-empty">{membersStatus || 'Chưa có nhân sự — thêm tại /nhan-su'}</p> : null}
             {perfRows.map(({ member, total, done, doing, review, todo, archivedCount, kpiPct }) => (
               <div className="content-plan-perf-row" key={member.id}>
                 <div className="content-plan-perf-name">{member.name}</div>
@@ -775,8 +1022,8 @@ export function ContentPlanPanel() {
         <div className="content-plan-modal-backdrop" role="presentation" onMouseDown={() => setShowTaskModal(false)}>
           <div className="content-plan-modal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
             <div className="content-plan-modal-head">
-              <strong>Task mới</strong>
-              <button type="button" onClick={() => setShowTaskModal(false)}><X /></button>
+              <strong>{editingTaskId ? 'Sửa task' : 'Task mới'}</strong>
+              <button type="button" onClick={() => { setShowTaskModal(false); setEditingTaskId(''); }}><X /></button>
             </div>
             <label>
               Tên task
@@ -785,7 +1032,8 @@ export function ContentPlanPanel() {
             <div className="content-plan-modal-grid">
               <label>
                 Giao cho
-                <select value={newAssignee} onChange={(event) => setNewAssignee(event.target.value)}>
+                <select value={newAssignee} onChange={(event) => setNewAssignee(event.target.value)} disabled={!members.length}>
+                  {!members.length ? <option value="">Chưa có nhân sự</option> : null}
                   {members.map((member) => (
                     <option key={member.id} value={member.name}>{member.name}</option>
                   ))}
@@ -814,18 +1062,74 @@ export function ContentPlanPanel() {
                 </select>
               </label>
             </div>
-            <label>
-              Liên kết kịch bản
-              <select value={newScriptId} onChange={(event) => setNewScriptId(event.target.value)}>
-                <option value="">— Chưa chọn —</option>
-                {scripts.map((script) => (
-                  <option key={script.id} value={script.id}>{script.title}</option>
-                ))}
-              </select>
-            </label>
             <div className="content-plan-modal-actions">
-              <button type="button" onClick={() => setShowTaskModal(false)}>Hủy</button>
-              <button type="button" className="content-plan-btn primary" onClick={createTask}>Thêm</button>
+              <button type="button" onClick={() => { setShowTaskModal(false); setEditingTaskId(''); }}>Hủy</button>
+              <button type="button" className="content-plan-btn primary" onClick={saveTask}>{editingTaskId ? 'Lưu' : 'Thêm'}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {notesTask ? (
+        <div className="content-plan-modal-backdrop" role="presentation" onMouseDown={() => setNotesTaskId('')}>
+          <div className="content-plan-modal content-plan-notes-modal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="content-plan-modal-head">
+              <div>
+                <strong>Ghi chú task</strong>
+                <span>{notesTask.title}</span>
+              </div>
+              <button type="button" onClick={() => setNotesTaskId('')}><X /></button>
+            </div>
+
+            <div className="content-plan-notes-layout">
+              <section className="content-plan-note-chat" aria-label="Chat ghi chú">
+                <div className="content-plan-note-list">
+                  {notesTask.notes?.length ? (
+                    notesTask.notes.map((note) => (
+                      <div className="content-plan-note-bubble" key={note.id || `${note.at}-${note.text}`}>
+                        <div>
+                          <strong>{note.staff_name || 'Nhân sự'}</strong>
+                          <span>{formatLogTime(note.at)}</span>
+                        </div>
+                        <p>{note.text}</p>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="content-plan-note-empty">Chưa có ghi chú trao đổi.</div>
+                  )}
+                </div>
+                <div className="content-plan-note-compose">
+                  <textarea
+                    value={noteText}
+                    onChange={(event) => setNoteText(event.target.value)}
+                    placeholder="Nhập phản hồi, ví dụ: Em sửa rồi / Cần chỉnh lại hook..."
+                    rows={3}
+                  />
+                  <button type="button" className="content-plan-btn primary" disabled={noteBusy || !noteText.trim()} onClick={() => void sendTaskNote()}>
+                    <SendHorizontal /> Gửi
+                  </button>
+                </div>
+              </section>
+
+              <section className="content-plan-timeline" aria-label="Timeline task">
+                <div className="content-plan-timeline-head">
+                  <Clock3 />
+                  <strong>Mốc thời gian</strong>
+                </div>
+                {notesTask.timeline?.length ? (
+                  notesTask.timeline.map((item) => (
+                    <div className="content-plan-timeline-item" key={item.id || `${item.kind}-${item.at}`}>
+                      <span />
+                      <div>
+                        <strong>{item.label || item.kind}</strong>
+                        <p>{formatLogTime(item.at)}{item.staff_name ? ` · ${item.staff_name}` : ''}</p>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="content-plan-note-empty">Chưa có timeline.</div>
+                )}
+              </section>
             </div>
           </div>
         </div>

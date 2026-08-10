@@ -24,7 +24,16 @@ from dotenv import load_dotenv
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(_BASE_DIR, '.env'), override=True)
 
-SUPABASE_URL = (os.environ.get('SUPABASE_URL') or '').rstrip('/')
+
+def _normalize_supabase_url(value: str) -> str:
+    url = (value or '').strip().rstrip('/')
+    for suffix in ('/rest/v1', '/storage/v1'):
+        if url.endswith(suffix):
+            return url[: -len(suffix)].rstrip('/')
+    return url
+
+
+SUPABASE_URL = _normalize_supabase_url(os.environ.get('SUPABASE_URL') or os.environ.get('VITE_SUPABASE_URL') or '')
 SUPABASE_KEY = (
     os.environ.get('SUPABASE_SERVICE_ROLE_KEY')
     or os.environ.get('SUPABASE_ANON_KEY')
@@ -59,6 +68,24 @@ def _url(path: str) -> str:
     return f'{SUPABASE_URL}/rest/v1/{path.lstrip("/")}'
 
 
+def _format_supabase_error(response: requests.Response) -> str:
+    message = response.text
+    code = ''
+    if response.headers.get('content-type', '').startswith('application/json'):
+        try:
+            body = response.json()
+            code = str(body.get('code') or '')
+            message = body.get('message') or message
+        except Exception:
+            pass
+    if code == '42501' or 'row-level security policy' in message.lower():
+        message = (
+            f'{message}. Supabase đang chặn ghi bởi RLS; chạy file SQL fix tương ứng '
+            f'(ví dụ supabase_app_kv_rls_fix.sql cho app_kv) hoặc cấu hình SUPABASE_SERVICE_ROLE_KEY ở backend.'
+        )
+    return message[:600]
+
+
 def _request(method: str, path: str, **kwargs) -> requests.Response:
     if not is_enabled():
         raise RuntimeError('Supabase chưa được cấu hình (thiếu SUPABASE_URL/KEY)')
@@ -68,7 +95,7 @@ def _request(method: str, path: str, **kwargs) -> requests.Response:
         try:
             r = requests.request(method, _url(path), headers=headers, timeout=_TIMEOUT, **kwargs)
             if r.status_code >= 400:
-                raise RuntimeError(f'Supabase {method} {path} {r.status_code}: {r.text}')
+                raise RuntimeError(f'Supabase {method} {path} {r.status_code}: {_format_supabase_error(r)}')
             return r
         except (requests.Timeout, requests.ConnectionError) as e:
             last_err = e
@@ -82,11 +109,17 @@ def ping() -> dict:
         return {'ok': False, 'error': 'Chưa cấu hình SUPABASE_URL/KEY'}
     try:
         r = requests.get(
-            f'{SUPABASE_URL}/rest/v1/',
+            f'{SUPABASE_URL}/rest/v1/app_kv',
             headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}'},
+            params={'select': 'key', 'limit': '1'},
             timeout=_TIMEOUT,
         )
-        return {'ok': r.status_code < 500, 'status': r.status_code}
+        result = {'ok': 200 <= r.status_code < 400, 'status': r.status_code}
+        if r.status_code in (401, 403):
+            result['error'] = 'Supabase từ chối API key hoặc key không có quyền'
+        elif r.status_code >= 400:
+            result['error'] = r.text[:300]
+        return result
     except Exception as e:
         return {'ok': False, 'error': str(e)}
 
@@ -126,6 +159,19 @@ def kv_get(key: str, default: Any = None) -> Any:
     r = _request('GET', f'app_kv?select=value&key=eq.{key}&limit=1')
     rows = r.json()
     return rows[0]['value'] if rows else default
+
+
+def kv_get_many(keys: list[str]) -> dict[str, Any]:
+    normalized = list(dict.fromkeys(str(key or '').strip() for key in keys if str(key or '').strip()))
+    if not normalized:
+        return {}
+    encoded = ','.join(quote(key, safe='') for key in normalized)
+    r = _request('GET', f'app_kv?select=key,value&key=in.({encoded})')
+    return {
+        str(row.get('key') or ''): row.get('value')
+        for row in r.json()
+        if str(row.get('key') or '')
+    }
 
 
 def kv_set(key: str, value: Any) -> None:
@@ -496,13 +542,33 @@ def _request_workflow(method: str, path: str, **kwargs) -> requests.Response:
     raise RuntimeError(f'Supabase {method} {path} failed')
 
 
-def list_content_tasks(table: Optional[str] = None) -> list:
+def list_content_tasks(table: Optional[str] = None, *, lite: bool = False) -> list:
+    table_name = table or CONTENT_TASK_TABLE
+    if lite:
+        select = (
+            'id,title,assignee_id,assignee_name,assignee_username,status,priority,due_date,'
+            'script_id,platform,created_at,updated_at,started_at,submitted_at,approved_at,completed_at'
+        )
+    else:
+        select = '*'
+    r = _request_workflow(
+        'GET',
+        f'{table_name}?select={select}&order=updated_at.desc',
+    )
+    return r.json()
+
+
+def get_content_task(task_id: str, table: Optional[str] = None) -> dict | None:
+    task_id = str(task_id or '').strip()
+    if not task_id:
+        return None
     table_name = table or CONTENT_TASK_TABLE
     r = _request_workflow(
         'GET',
-        f'{table_name}?select=*&order=updated_at.desc',
+        f'{table_name}?id=eq.{quote(task_id, safe="")}&limit=1',
     )
-    return r.json()
+    rows = r.json()
+    return rows[0] if rows else None
 
 
 def sync_content_tasks(rows: list[dict], table: Optional[str] = None) -> None:
@@ -563,7 +629,7 @@ def list_content_script_blocks(table: Optional[str] = None) -> list:
     table_name = table or CONTENT_SCRIPT_BLOCK_TABLE
     r = _request_workflow(
         'GET',
-        f'{table_name}?select=*&order=block_order.asc',
+        f'{table_name}?select=id,script_id,content_type,content,block_order,metadata&order=block_order.asc',
     )
     return r.json()
 
@@ -587,6 +653,19 @@ def sync_content_script_blocks(rows: list[dict], script_ids: list[str] | None = 
                 json=rows[i:i + chunk],
                 prefer='resolution=merge-duplicates,return=minimal',
             )
+
+
+def purge_content_script_blocks(script_ids: list[str], table: Optional[str] = None) -> None:
+    table_name = table or CONTENT_SCRIPT_BLOCK_TABLE
+    for script_id in script_ids or []:
+        sid = str(script_id or '').strip()
+        if not sid:
+            continue
+        _request_workflow(
+            'DELETE',
+            f'{table_name}?script_id=eq.{quote(sid, safe="")}',
+            prefer='return=minimal',
+        )
 
 
 # ── seen_posts ──────────────────────────────────────────

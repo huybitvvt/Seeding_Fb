@@ -1046,6 +1046,8 @@ export function CommentLeadInboxPanel() {
         channel_name: row.channel_name,
         message,
         comment_id: result.comment_id || result.cid || result.id,
+        customer_name: row.author_name || '',
+        customer_need: row.message || '',
         error: result.error,
         extension_result: result,
       }),
@@ -1301,6 +1303,8 @@ export function CommentLeadInboxPanel() {
           comment_id: selected.comment_id,
           depth: selected.depth || 0,
           message,
+          customer_name: selected.author_name || '',
+          customer_need: selected.message || '',
         }),
       });
       const data = await r.json().catch(() => ({ ok: false, error: `Server lỗi ${r.status}` }));

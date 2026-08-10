@@ -203,6 +203,8 @@ export function PostCard({
           message,
           image_url: image,
           page_id: pageId || pageIdFromPost,
+          customer_name: authorName,
+          post_message: bodyText,
         }),
       });
       const d = await r.json();
@@ -355,6 +357,8 @@ export function PostCard({
           page_id: pageIdFromPost || pageId,
           source: pageIdFromPost ? 'facebook_page' : 'facebook',
           depth,
+          customer_name: comment.from?.name || authorName,
+          customer_need: comment.message || bodyText,
         }),
         timeoutMs: 60000,
       });
